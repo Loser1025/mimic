@@ -26,7 +26,6 @@ def split_audio(audio_path, chunk_length_min=5):
 
     for i, start_ms in enumerate(range(0, len(audio), chunk_length_ms)):
         chunk = audio[start_ms:start_ms + chunk_length_ms]
-        # ファイル形式を元ファイルの拡張子に合わせる
         original_extension = os.path.splitext(audio_path)[1]
         chunk_path = f"chunk_{i}{original_extension}"
         chunk.export(chunk_path, format=original_extension.replace('.', ''))
@@ -42,12 +41,10 @@ def process_audio_chunk(audio_path, api_key):
     if not api_key:
         return "エラー: Gemini APIキーが設定されていません。"
 
-    # 音声ファイルを読み込み、Base64にエンコード
     try:
         with open(audio_path, "rb") as audio_file:
             audio_bytes = audio_file.read()
         encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
-        # ファイルの拡張子からMIMEタイプを判断
         ext = os.path.splitext(audio_path)[1].lower()
         if ext == ".mp3":
             mime_type = "audio/mpeg"
@@ -95,19 +92,20 @@ def process_audio_chunk(audio_path, api_key):
     except (KeyError, IndexError, json.JSONDecodeError) as e:
         return f"APIレスポンスの解析中にエラーが発生しました: {e}\nResponse: {response.text}"
 
-# --- メイン処理 ---
 def main():
     """
     メインの処理を実行する関数
     """
     print("文字起こし処理を開始します...")
 
-    if not GOOGLE_API_KEY or GOOGLE_API_KEY == "ここにあなたのAPIキーを貼り付けてください":
-        print("エラー: .envファイルにGemini APIキーが設定されていません。")
+    if not GOOGLE_API_KEY:
+        print("エラー: APIキーが設定されていません。")
         return
 
     # 1. ユーザーから音声ファイルのパスを入力してもらう
-    audio_file_path = input("文字起こししたい音声ファイル名（例: meeting.mp3）を入力してください: ")
+    audio_file_path = input("ここに音声ファイルをドラッグ＆ドロップしてEnterキーを押してください: ")
+    # ドラッグ＆ドロップ時にシングルクォートやダブルクォートが付く場合があるので、それを取り除く
+    audio_file_path = audio_file_path.strip().strip("'\"")
 
     # 2. 音声ファイルをチャンクに分割
     chunk_files = split_audio(audio_file_path, chunk_length_min=5)
