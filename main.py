@@ -7,7 +7,7 @@ from pydub import AudioSegment
 from dotenv import load_dotenv
 
 # --- 事前準備：環境変数からAPIキーを読み込む ---
-load_dotenv() # .envファイルの内容を環境変数として読み込む
+load_dotenv()
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 def split_audio(audio_path, chunk_length_min=5):
@@ -19,6 +19,10 @@ def split_audio(audio_path, chunk_length_min=5):
         audio = AudioSegment.from_file(audio_path)
     except FileNotFoundError:
         print(f"エラー: ファイルが見つかりません -> {audio_path}")
+        return None
+    except Exception as e:
+        # pydubのデコードエラーなどをここでキャッチ
+        print(f"エラー: 音声ファイルの読み込みに失敗しました。ファイルが破損している可能性があります。詳細: {e}")
         return None
     
     chunk_length_ms = chunk_length_min * 60 * 1000
@@ -111,7 +115,6 @@ def main():
     chunk_files = split_audio(audio_file_path, chunk_length_min=5)
     
     if chunk_files is None:
-        print("処理を中断しました。")
         return
 
     full_transcript = []
