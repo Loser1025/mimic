@@ -35,7 +35,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 CHUNK_LENGTH_MIN = 4
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
-OUTPUT_FILENAME = str(DOWNLOADS_DIR / "transcript.md")
+OUTPUT_FILENAME = str(DOWNLOADS_DIR / "transcript.txt")
 
 
 def split_audio(audio_path, chunk_length_min=4):
