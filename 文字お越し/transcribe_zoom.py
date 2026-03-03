@@ -15,14 +15,18 @@ import os
 import sys
 import re
 import argparse
+import tempfile
 from pathlib import Path
+
+# 一時ファイル用ASCIIパス
+TEMP_DIR = tempfile.gettempdir()
 
 # Windows環境での文字化け対策
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
 # ffmpegのパスをPATHに追加（wingetでインストールした場合）
-_FFMPEG_BIN = r"C:\Users\mitsuba801\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin"
+_FFMPEG_BIN = r"C:\Users\Loser\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin"
 if os.path.isdir(_FFMPEG_BIN) and _FFMPEG_BIN not in os.environ.get("PATH", ""):
     os.environ["PATH"] = _FFMPEG_BIN + os.pathsep + os.environ.get("PATH", "")
 
@@ -113,7 +117,7 @@ def split_audio(audio_path: str, chunk_length_min: int = CHUNK_LENGTH_MIN) -> li
 
     for i, start_ms in enumerate(range(0, len(audio), chunk_length_ms)):
         chunk = audio[start_ms:start_ms + chunk_length_ms]
-        chunk_path = f"zoom_chunk_{i}.mp3"
+        chunk_path = os.path.join(TEMP_DIR, f"zoom_chunk_{i}.mp3")
         chunk.export(chunk_path, format="mp3")
         chunks.append(chunk_path)
         print(f"   チャンク {i+1} を作成: {chunk_path}")
@@ -132,7 +136,7 @@ def transcribe_chunk(audio_path: str, client: Groq, previous_context: str = "") 
     with open(audio_path, "rb") as f:
         transcription = client.audio.transcriptions.create(
             model="whisper-large-v3",
-            file=f,
+            file=("audio.mp3", f),
             language="ja",
             response_format="text"
         )
@@ -251,6 +255,8 @@ def main():
             lines = [l for l in result.strip().splitlines() if l.strip()]
             previous_context = "\n".join(lines[-5:])
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"  ❌ エラー: {e}")
             failed_chunks.append(i + 1)
             transcript_parts.append(f"<!-- チャンク{i+1} 処理失敗: {e} -->")
