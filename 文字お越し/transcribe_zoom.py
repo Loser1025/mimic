@@ -26,7 +26,7 @@ if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
 # ffmpegのパスをPATHに追加（wingetでインストールした場合）
-_FFMPEG_BIN = r"C:\Users\Loser\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin"
+_FFMPEG_BIN = r"C:\Users\弁護士法人響\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin"
 if os.path.isdir(_FFMPEG_BIN) and _FFMPEG_BIN not in os.environ.get("PATH", ""):
     os.environ["PATH"] = _FFMPEG_BIN + os.pathsep + os.environ.get("PATH", "")
 
@@ -40,7 +40,6 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 CHUNK_LENGTH_MIN = 4  # Groq Whisperの25MB制限に対応するため4分ごとに分割
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
-OUTPUT_FILENAME = str(DOWNLOADS_DIR / "zoom_transcript.txt")
 
 
 # ============================================================
@@ -205,8 +204,8 @@ def main():
     parser.add_argument("video_file", help="文字起こしする動画・音声ファイルのパス")
     parser.add_argument(
         "--output",
-        default=OUTPUT_FILENAME,
-        help=f"出力ファイル名（デフォルト: {OUTPUT_FILENAME}）"
+        default=None,
+        help="出力ファイル名（デフォルト: 入力ファイルと同じ場所・同じ名前.txt）"
     )
     parser.add_argument(
         "--chunk-min",
@@ -215,6 +214,8 @@ def main():
         help=f"分割サイズ（分）（デフォルト: {CHUNK_LENGTH_MIN}）"
     )
     args = parser.parse_args()
+    if args.output is None:
+        args.output = str(Path(args.video_file).with_suffix(".txt"))
 
     if not GROQ_API_KEY:
         print("❌ GROQ_API_KEY が設定されていません。")

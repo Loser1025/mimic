@@ -13,14 +13,17 @@ import os
 import sys
 import json
 import argparse
+import tempfile
 from pathlib import Path
+
+TEMP_DIR = tempfile.gettempdir()
 
 # Windows環境での文字化け対策
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
 # ffmpegのパスをPATHに追加（wingetでインストールした場合）
-_FFMPEG_BIN = r"C:\Users\mitsuba801\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin"
+_FFMPEG_BIN = r"C:\Users\弁護士法人響\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin"
 if os.path.isdir(_FFMPEG_BIN) and _FFMPEG_BIN not in os.environ.get("PATH", ""):
     os.environ["PATH"] = _FFMPEG_BIN + os.pathsep + os.environ.get("PATH", "")
 
@@ -35,7 +38,6 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 CHUNK_LENGTH_MIN = 4
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
-OUTPUT_FILENAME = str(DOWNLOADS_DIR / "transcript.txt")
 
 
 def split_audio(audio_path, chunk_length_min=4):
@@ -50,7 +52,7 @@ def split_audio(audio_path, chunk_length_min=4):
 
     for i, start_ms in enumerate(range(0, len(audio), chunk_length_ms)):
         chunk = audio[start_ms:start_ms + chunk_length_ms]
-        chunk_path = f"chunk_{i}.mp3"
+        chunk_path = os.path.join(TEMP_DIR, f"chunk_{i}.mp3")
         chunk.export(chunk_path, format="mp3")
         chunks.append(chunk_path)
         print(f"   チャンク {i+1} を作成: {chunk_path}")
@@ -146,9 +148,11 @@ def cleanup_chunks(chunk_files):
 def main():
     parser = argparse.ArgumentParser(description="Groq Whisper 音声文字起こしツール")
     parser.add_argument("audio_file", help="文字起こしする音声ファイルのパス")
-    parser.add_argument("--output", default=OUTPUT_FILENAME, help=f"出力ファイル名（デフォルト: {OUTPUT_FILENAME}）")
+    parser.add_argument("--output", default=None, help="出力ファイル名（デフォルト: 入力ファイルと同じ場所・同じ名前.txt）")
     parser.add_argument("--chunk-min", type=int, default=CHUNK_LENGTH_MIN, help=f"分割サイズ（分）（デフォルト: {CHUNK_LENGTH_MIN}）")
     args = parser.parse_args()
+    if args.output is None:
+        args.output = str(Path(args.audio_file).with_suffix(".txt"))
 
     if not GROQ_API_KEY:
         print("❌ GROQ_API_KEY が設定されていません。")
