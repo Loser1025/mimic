@@ -203,7 +203,7 @@ async def run_automation(config, ids, status):
     use_inherit = config.get('inherit_previous', True)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=150)
+        browser = await p.chromium.launch(headless=True, slow_mo=150)
         page = await browser.new_page()
 
         try:
