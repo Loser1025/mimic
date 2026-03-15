@@ -14,6 +14,7 @@ import sys
 import json
 import argparse
 import tempfile
+import time
 from pathlib import Path
 
 TEMP_DIR = tempfile.gettempdir()
@@ -28,14 +29,14 @@ if os.path.isdir(_FFMPEG_BIN) and _FFMPEG_BIN not in os.environ.get("PATH", ""):
     os.environ["PATH"] = _FFMPEG_BIN + os.pathsep + os.environ.get("PATH", "")
 
 from pydub import AudioSegment
-from groq import Groq
+from groq import Groq, RateLimitError
 from dotenv import load_dotenv
 
 # .env ファイルからAPIキーを読み込む
 load_dotenv()
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-CHUNK_LENGTH_MIN = 4
+CHUNK_LENGTH_MIN = 3  # TPM制限(6000)を考慮し3分に短縮
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
 
@@ -120,14 +121,32 @@ def transcribe_with_groq(audio_path, client, previous_context=""):
 {raw_text}
 """
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-        max_tokens=8192
-    )
-
-    raw_output = response.choices[0].message.content
+    # ------------------------------------------------------------
+    # レート制限対策のリトライループ (8bモデルに切り替えて制限を緩和)
+    # ------------------------------------------------------------
+    max_retries = 3
+    retry_delay = 10  # 待機時間を少し長めに設定
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=8192
+            )
+            raw_output = response.choices[0].message.content
+            break
+        except RateLimitError as e:
+            if attempt < max_retries - 1:
+                print(f"  ⚠️ レート制限に達しました。{retry_delay}秒待機してリトライします... ({attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # 指数バックオフ
+            else:
+                print(f"  ❌ レート制限エラーが解消されませんでした。")
+                raise e
+        except Exception as e:
+            print(f"  ❌ 予期せぬエラーが発生しました: {e}")
+            raise e
 
     # 【話者】\n発言 → 【話者】発言 に整形（LLMが改行を挟んだ場合の補正）
     import re
@@ -184,6 +203,10 @@ def main():
             # 次チャンクのために末尾5発言をコンテキストとして保持
             lines = [l for l in result.strip().splitlines() if l.strip()]
             previous_context = "\n".join(lines[-5:])
+            
+            # 連続リクエストによるレート制限を避けるため少し待機
+            if i < len(chunk_files) - 1:
+                time.sleep(2)
         except Exception as e:
             print(f"  ❌ エラーが発生しました: {e}")
             failed_chunks.append(i+1)
