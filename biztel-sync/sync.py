@@ -97,7 +97,7 @@ def append_to_sheets(counter):
         spreadsheetId=SPREADSHEET_ID,
         range=f'{SHEET_NAME}!{START_COL}:{START_COL}',
         valueInputOption='USER_ENTERED',
-        insertDataOption='INSERT_ROWS',
+        insertDataOption='OVERWRITE',
         body={'values': rows}
     ).execute()
 
