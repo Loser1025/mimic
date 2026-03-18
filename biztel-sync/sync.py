@@ -73,7 +73,7 @@ TARGET_EXTENSIONS = {'3632', '3620', '3617', '3640', '3622', '3607', '3639', '36
 
 def aggregate_by_extension(csv_text):
     reader = csv.reader(io.StringIO(csv_text))
-    counter = Counter()
+    counter = Counter({ext: 0 for ext in TARGET_EXTENSIONS})  # 全件0で初期化
     for row in reader:
         if len(row) >= 3:
             ext = row[2].strip()
