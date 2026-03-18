@@ -69,14 +69,15 @@ def get_biztel_csv():
     return r_dl.content.decode('shift-jis', errors='replace')
 
 
+TARGET_EXTENSIONS = {'3632', '3620', '3617', '3640', '3622', '3607', '3639', '3635'}
+
 def aggregate_by_extension(csv_text):
     reader = csv.reader(io.StringIO(csv_text))
     counter = Counter()
     for row in reader:
         if len(row) >= 3:
             ext = row[2].strip()
-            # 内線番号のみ（外部番号は0始まりや10桁以上なので除外）
-            if ext and not ext.startswith('0') and len(ext) <= 6:
+            if ext in TARGET_EXTENSIONS:
                 counter[ext] += 1
     return counter
 
