@@ -69,28 +69,40 @@ def get_biztel_csv():
     return r_dl.content.decode('shift-jis', errors='replace')
 
 
-TARGET_EXTENSIONS = {'3632', '3620', '3617', '3640', '3622', '3607', '3639', '3635'}
-
-def aggregate_by_extension(csv_text):
-    reader = csv.reader(io.StringIO(csv_text))
-    counter = Counter({ext: 0 for ext in TARGET_EXTENSIONS})  # 全件0で初期化
-    for row in reader:
-        if len(row) >= 3:
-            ext = row[2].strip()
-            if ext in TARGET_EXTENSIONS:
-                counter[ext] += 1
-    return counter
+MASTER_RANGE = 'テレグラム管理!R6:R19'
 
 
-def append_to_sheets(counter):
+def get_sheets_service():
     creds = Credentials.from_service_account_info({
         'type': 'service_account',
         'client_email': os.environ['GOOGLE_CLIENT_EMAIL'],
         'private_key': os.environ['GOOGLE_PRIVATE_KEY'].replace('\\n', '\n'),
         'token_uri': 'https://oauth2.googleapis.com/token',
     }, scopes=['https://www.googleapis.com/auth/spreadsheets'])
-    service = build('sheets', 'v4', credentials=creds)
+    return build('sheets', 'v4', credentials=creds)
 
+
+def get_target_extensions(service):
+    result = service.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range=MASTER_RANGE,
+    ).execute()
+    values = result.get('values', [])
+    return {row[0].strip() for row in values if row and row[0].strip()}
+
+
+def aggregate_by_extension(csv_text, target_extensions):
+    reader = csv.reader(io.StringIO(csv_text))
+    counter = Counter({ext: 0 for ext in target_extensions})
+    for row in reader:
+        if len(row) >= 3:
+            ext = row[2].strip()
+            if ext in target_extensions:
+                counter[ext] += 1
+    return counter
+
+
+def append_to_sheets(service, counter):
     now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
     rows = [[ext, count, now_str] for ext, count in sorted(counter.items())]
 
@@ -108,6 +120,9 @@ def append_to_sheets(counter):
 
 
 if __name__ == '__main__':
+    service = get_sheets_service()
+    target_extensions = get_target_extensions(service)
+    print(f'対象内線番号: {sorted(target_extensions)}')
     csv_text = get_biztel_csv()
-    counter = aggregate_by_extension(csv_text)
-    append_to_sheets(counter)
+    counter = aggregate_by_extension(csv_text, target_extensions)
+    append_to_sheets(service, counter)
