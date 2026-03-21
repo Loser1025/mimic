@@ -39,7 +39,7 @@ DOMAIN_CONFIG = {
     },
     'thank': {
         'base_url': 'https://thank.leaduplus.pro',
-        'sheet_name': 'daily分析（thank）',
+        'sheet_name': 'daily分析（thank） ',
         'login_id': 'thank_help2',
         'login_pw': 't4$aqKoxjGRr',
     },
@@ -137,8 +137,23 @@ def build_sheets_service():
     return build('sheets', 'v4', credentials=creds)
 
 
+def list_sheet_names(service) -> list:
+    """スプレッドシート内の全シート名を取得"""
+    meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    return [s['properties']['title'] for s in meta.get('sheets', [])]
+
+
 def get_sheet_headers(service, sheet_name: str) -> list:
     """P1:Z1 のヘッダーを取得"""
+    # シート名が存在するか事前確認
+    available = list_sheet_names(service)
+    if sheet_name not in available:
+        print(f'ERROR: シート "{sheet_name}" が見つかりません。')
+        print(f'利用可能なシート一覧:')
+        for s in available:
+            print(f'  - {repr(s)}')
+        raise ValueError(f'シート "{sheet_name}" が存在しません')
+
     header_range = f"'{sheet_name}'!P1:Z1"
     result = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
