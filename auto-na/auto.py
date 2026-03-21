@@ -129,10 +129,10 @@ def strip_counter(text):
     return re.sub(r'\(\d+\)$', '', text).strip()
 
 
-async def scrape_previous(page, cid):
+async def scrape_previous(page, cid, domain):
     """履歴ページの最新エントリからフォーム値を取得"""
     await page.goto(
-        f'https://mitsuba.leaduplus.pro/debt/consulter/contactHistoryNA/view/{cid}'
+        f'https://{domain}.leaduplus.pro/debt/consulter/contactHistoryNA/view/{cid}'
     )
     await page.wait_for_load_state('networkidle')
 
@@ -201,6 +201,7 @@ async def scrape_previous(page, cid):
 
 async def run_automation(config, ids, status):
     use_inherit = config.get('inherit_previous', True)
+    domain = config.get('domain', 'mitsuba')
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, slow_mo=150)
@@ -209,7 +210,7 @@ async def run_automation(config, ids, status):
         try:
             # ── ログイン（最初のIDのページへアクセスしてリダイレクト先でログイン）──
             first_id = str(ids[0]).strip()
-            start_url = f'https://mitsuba.leaduplus.pro/debt/consulter/contactHistoryNA/view/{first_id}'
+            start_url = f'https://{domain}.leaduplus.pro/debt/consulter/contactHistoryNA/view/{first_id}'
             await page.goto(start_url)
             await page.wait_for_load_state('networkidle')
 
@@ -258,7 +259,7 @@ async def run_automation(config, ids, status):
                     prev = {}
                     if use_inherit:
                         try:
-                            prev = await scrape_previous(page, cid)
+                            prev = await scrape_previous(page, cid, domain)
                             if prev:
                                 status['log'].append(f'  └ {cid}: 前回値を取得しました')
                         except Exception:
@@ -269,7 +270,7 @@ async def run_automation(config, ids, status):
                         return config.get(key) or prev.get(key, '')
 
                     # ── 登録フォームへ遷移 ──
-                    popup_url = f'https://mitsuba.leaduplus.pro/debt/consulter/contactHistoryNA/popup/1/{cid}'
+                    popup_url = f'https://{domain}.leaduplus.pro/debt/consulter/contactHistoryNA/popup/1/{cid}'
                     await page.goto(popup_url)
                     await page.wait_for_load_state('networkidle')
 
