@@ -14,6 +14,7 @@
 import csv
 import io
 import json
+import os
 import re
 import sys
 from datetime import datetime
@@ -130,10 +131,19 @@ def parse_csv(text: str):
 
 # ── Google Sheets ─────────────────────────────────────
 def build_sheets_service():
-    creds = service_account.Credentials.from_service_account_file(
-        str(SA_PATH),
-        scopes=['https://www.googleapis.com/auth/spreadsheets'],
-    )
+    client_email = os.environ.get('GOOGLE_CLIENT_EMAIL')
+    private_key  = os.environ.get('GOOGLE_PRIVATE_KEY')
+    if client_email and private_key:
+        creds = service_account.Credentials.from_service_account_info(
+            {'type': 'service_account', 'client_email': client_email,
+             'private_key': private_key.replace('\\n', '\n'),
+             'token_uri': 'https://oauth2.googleapis.com/token'},
+            scopes=['https://www.googleapis.com/auth/spreadsheets'],
+        )
+    else:
+        creds = service_account.Credentials.from_service_account_file(
+            str(SA_PATH), scopes=['https://www.googleapis.com/auth/spreadsheets'],
+        )
     return build('sheets', 'v4', credentials=creds)
 
 
@@ -245,7 +255,7 @@ def write_to_sheet(service, sheet_name: str, sheet_headers: list, csv_headers: l
     service.spreadsheets().values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=write_range,
-        valueInputOption='RAW',
+        valueInputOption='USER_ENTERED',
         body={'values': write_rows},
     ).execute()
 
@@ -329,9 +339,12 @@ def main():
     print(f'対象日: {today}')
     print(f'処理ドメイン: {domains}')
 
-    # hibiki の config.json を先読み
+    # hibiki の認証情報（環境変数 → config.json の順で読む）
     hibiki_cfg = {}
-    if CONFIG_PATH.exists():
+    if os.environ.get('HIBIKI_LOGIN_ID'):
+        hibiki_cfg = {'login_id': os.environ['HIBIKI_LOGIN_ID'],
+                      'login_pw': os.environ.get('HIBIKI_LOGIN_PW', '')}
+    elif CONFIG_PATH.exists():
         hibiki_cfg = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
 
     # Google Sheets サービスは1回だけ初期化して使い回す
