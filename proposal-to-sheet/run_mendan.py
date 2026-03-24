@@ -369,10 +369,6 @@ def write_to_sheet(service, sheet_name: str, office_range: dict,
         else:
             print(f'    {col_letter}: "{sh}" → ★未一致')
 
-    if not csv_rows:
-        print('\n  対象データが0件でした（面談日=今日のデータなし）')
-        return 0
-
     # クリア
     clear_range = f"'{sheet_name}'!{start_letter}{DATA_ROW}:{end_letter}"
     service.spreadsheets().values().clear(
@@ -380,6 +376,10 @@ def write_to_sheet(service, sheet_name: str, office_range: dict,
         range=clear_range,
     ).execute()
     print(f'\n  [クリア] {clear_range}')
+
+    if not csv_rows:
+        print('\n  対象データが0件でした（面談日=今日のデータなし）')
+        return 0
 
     # 書き込みデータ作成
     write_rows = []
@@ -517,10 +517,6 @@ def run_mitenca(today: str, service):
             else:
                 print(f'    {col_letter}: "{sh}" → ★未一致')
 
-        if not csv_rows:
-            print('\n  対象データが0件でした')
-            return '0件（データなし）'
-
         # クリア（A2:M 以降）
         end_letter = index_to_col_letter(len(sh_headers) - 1)
         clear_range = f"'{sheet_name}'!A{MITENCA_DATA_ROW}:{end_letter}"
@@ -529,6 +525,10 @@ def run_mitenca(today: str, service):
             range=clear_range,
         ).execute()
         print(f'\n  [クリア] {clear_range}')
+
+        if not csv_rows:
+            print('\n  対象データが0件でした')
+            return '0件（データなし）'
 
         # 書き込み
         write_rows = []
