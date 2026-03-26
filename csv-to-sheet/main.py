@@ -111,6 +111,11 @@ def main():
     ).execute()
     sheet_rows = result.get('values', [])
 
+    # G列をクリア
+    clear_range = f"'{sheet_name}'!G{row_start}:G{row_end}"
+    sheets_api.clear(spreadsheetId=spreadsheet_id, range=clear_range).execute()
+    print(f"G列クリア完了 ({clear_range})")
+
     updates = []
     not_found = []
     no_biko = []
