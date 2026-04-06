@@ -31,10 +31,10 @@ def process_lstep_csv(file_path):
             with open(file_path, 'r', encoding=enc) as f:
                 lines = f.readlines()
             
-            # 「日付」という文字列が含まれる行をヘッダー行として特定する
+            # 「日付」または「登録日」という文字列が含まれる行をヘッダー行として特定する
             header_idx = -1
             for i, line in enumerate(lines):
-                if '日付' in line:
+                if any(kw in line for kw in ['日付', '登録日', '反響']):
                     header_idx = i
                     break
             
@@ -48,15 +48,15 @@ def process_lstep_csv(file_path):
             continue
 
     if df is None:
-        raise ValueError("CSVファイルを正しく解析できませんでした。エンコーディングが不適切か、'日付'列が見つかりません。")
+        raise ValueError("CSVファイルを正しく解析できませんでした。エンコーディングが不適切か、ヘッダー行が見つかりません。")
 
     # --- データ加工ロジック ---
     
     # 1. 必要な列の特定
-    # 日付列を探す
-    date_col = next((col for col in df.columns if '日付' in col), df.columns[0])
+    # 日付列を探す (日付, 登録日, 反響日)
+    date_col = next((col for col in df.columns if any(kw in col for kw in ['日付', '登録日', '反響日'])), df.columns[0])
     # 登録数/反響数などの数値列を探す
-    count_col = next((col for col in df.columns if any(kw in col for kw in ['登録数', '反響数', '数'])), df.columns[1])
+    count_col = next((col for col in df.columns if any(kw in col for kw in ['登録数', '反響数', '数', '全体'])), df.columns[1])
     
     print(f"📊 抽出列: 日付={date_col}, 数値={count_col}")
 
@@ -84,6 +84,9 @@ def process_lstep_csv(file_path):
 
     # 4. 「合計」などの集計行を除外 (日付列に数字以外が入っている行を消す)
     df_processed = df_processed[df_processed[date_col].str.contains(r'\d{4}-\d{2}-\d{2}', na=False)]
+
+    # 5. 日付で昇順ソート
+    df_processed = df_processed.sort_values(by=date_col)
 
     # Google Sheets API 用に 2次元リストに変換
     result = df_processed.values.tolist()

@@ -6,7 +6,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
@@ -50,9 +50,12 @@ def setup_driver():
             "download.default_directory": CONFIG["DOWNLOAD_DIR"],
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
-            "safebrowsing.enabled": True
+            "safebrowsing.enabled": False, # 警告を回避
+            "profile.default_content_settings.popups": 0,
+            "profile.content_settings.exceptions.automatic_downloads.*.setting": 1
         }
         chrome_options.add_experimental_option("prefs", prefs)
+        chrome_options.add_argument("--safebrowsing-disable-download-protection") # 警告を回避
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
@@ -90,7 +93,7 @@ def download_csv(driver):
         driver.get(CONFIG["LOGIN_URL"])
 
         # ログイン入力
-        wait.until(EC.presence_of_element_located((By.NAME, "user_id"))).send_keys(CONFIG["USER_ID"])
+        wait.until(EC.presence_of_element_located((By.NAME, "name"))).send_keys(CONFIG["USER_ID"])
         driver.find_element(By.NAME, "password").send_keys(CONFIG["PASSWORD"])
 
         logger.info("reCAPTCHAの処理を開始します...")
@@ -100,39 +103,73 @@ def download_csv(driver):
             driver.switch_to.frame(captcha_iframe)
             checkbox = driver.find_element(By.ID, "recaptcha-anchor")
             checkbox.click()
+            
+            # チェックボックスに「緑のチェック」が入るまで待機 (aria-checked="true")
+            logger.info("認証完了を待機中（画像認証が出た場合は手動で解決してください）...")
+            WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "recaptcha-anchor").get_attribute("aria-checked") == "true")
+            
             driver.switch_to.default_content()
-            logger.info("reCAPTCHAのチェックボックスをクリックしました。")
-        except (TimeoutException, NoSuchElementException):
-            logger.warning("reCAPTCHAの自動クリックに失敗しました。手動で解決してください。")
-            input(">>> ブラウザでreCAPTCHAを完了させ、『ログイン』ボタンを押す直前まで進めてから、ここでEnterキーを押してください...")
+            logger.info("reCAPTCHAの認証が完了しました。")
+        except Exception:
+            driver.switch_to.default_content()
+            logger.warning("reCAPTCHAの自動認証に時間がかかっています。手動で解決してください。")
+            input(">>> ブラウザでログインボタンを押す直前まで進めてから、ここでEnterキーを押してください...")
 
         # ログイン実行
-        driver.find_element(By.XPATH, "//input[@value='ログイン']").click()
+        logger.info("ログインボタンをクリックします...")
+        login_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'ログイン')]")))
+        login_btn.click()
 
-        logger.info("分析メニューへ移動中...")
-        wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "クロス分析"))).click()
-        wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "反響数？"))).click()
-
-        logger.info("抽出条件を設定中...")
-        wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), '日付選択(終点)')]"))).click()
-        # 5日を選択
-        wait.until(EC.element_to_be_clickable((By.XPATH, "//td[text()='5']"))).click()
-        driver.find_element(By.XPATH, "//input[@value='分析登録']").click()
-
-        logger.info("CSVをエクスポート中...")
-        analysis_btn = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "分析を表示する")))
-        analysis_btn.click()
-
-        # ウィンドウ切り替え
-        driver.switch_to.window(driver.window_handles[-1])
+        # ログイン後の遷移を十分に待機
+        logger.info("ログイン処理の完了を待機中（約7秒）...")
+        time.sleep(7)
         
-        # 再計算
-        wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), '再計算')]"))).click()
-        time.sleep(3) # 計算処理待ち
+        logger.info("反響数ページへ直接移動中...")
+        driver.get("https://manager.linestep.net/line/board/edit/117510?group=0%EF%BC%94")
+        
+        logger.info("抽出条件を設定中...")
+        # 日付選択(終点) の input 要素を探してクリック
+        datepicker_end = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='日付選択(終点)']")))
+        datepicker_end.click()
+        time.sleep(2) # カレンダーのアニメーション待ち
+        
+        # 終点カレンダー内の '6' をクリック (起点カレンダーと混同しないように親要素を特定)
+        day_6 = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='日付選択(終点)']/ancestor::div[contains(@class, 'vdp-datepicker')]//span[contains(@class, 'day') and text()='6']")))
+        day_6.click()
+        time.sleep(1)
+        
+        logger.info("「分析登録」ボタンをクリック中...")
+        # 属性を問わず '分析登録' を含む要素を探す
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@value='分析登録' or contains(text(), '分析登録')]"))).click()
+
+        logger.info("分析を表示中...")
+        analysis_link = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "分析を表示する")))
+        analysis_link.click()
+
+        # ウィンドウが増えるのを待ってから切り替え
+        wait.until(lambda d: len(d.window_handles) > 1)
+        driver.switch_to.window(driver.window_handles[-1])
+        logger.info("新しいウィンドウに切り替えました。")
+
+        # 並び替え設定
+        logger.info("並び替え条件を設定中...")
+        wait.until(EC.presence_of_element_located((By.ID, "sort_117510")))
+        Select(driver.find_element(By.ID, "sort_117510")).select_by_value("-1")
+        Select(driver.find_element(By.ID, "asc_117510")).select_by_value("1")
+
+        # 再計算ボタン（アイコンが含まれる可能性があるため柔軟に探す）
+        logger.info("再計算を実行中...")
+        recalc_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(., '再計算')] | //button[contains(., '再計算')]")))
+        recalc_btn.click()
+        
+        # 計算完了を十分に待機
+        logger.info("計算完了を待機中（15秒）...")
+        time.sleep(15) 
 
         # エクスポート
-        wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "CSVエクスポート"))).click()
-        
+        logger.info("CSVエクスポートをクリック中...")
+        export_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'CSVエクスポート')] | //button[contains(., 'CSVエクスポート')]")))
+        export_btn.click()        
         return wait_for_download_complete()
 
     except (TimeoutException, NoSuchElementException) as e:
@@ -164,6 +201,16 @@ def safe_upload_to_sheets(data):
 def main():
     driver = None
     try:
+        # 0. 以前のダウンロードファイルを削除してクリーンにする
+        if os.path.exists(CONFIG["DOWNLOAD_DIR"]):
+            for f in os.listdir(CONFIG["DOWNLOAD_DIR"]):
+                if f.endswith(".csv"):
+                    try:
+                        os.remove(os.path.join(CONFIG["DOWNLOAD_DIR"], f))
+                    except:
+                        pass
+        logger.info("ダウンロードフォルダをクリアしました。")
+
         # 1. CSV取得
         driver = setup_driver()
         csv_path = download_csv(driver)
@@ -179,6 +226,11 @@ def main():
         # 3. スプレッドシートへ書き込み (リトライ付き)
         logger.info("Googleスプレッドシートへアップロード中...")
         safe_upload_to_sheets(processed_data)
+
+        # 4. クリーンアップ (成功したらCSVを削除)
+        if os.path.exists(csv_path):
+            os.remove(csv_path)
+            logger.info(f"使用済みのCSVファイルを削除しました: {csv_path}")
 
         logger.info("\n====================================================")
         logger.info("🎉 すべての工程が正常に完了しました！")

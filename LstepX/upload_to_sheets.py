@@ -43,8 +43,8 @@ def upload_to_google_sheets(data):
         header = [['日付', '登録数']]
         full_data = header + data
         
-        # A1セルから一括更新
-        sheet.update('A1', full_data)
+        # A1セルから一括更新 (日付や数値を正しく認識させるため USER_ENTERED を指定)
+        sheet.update('A1', full_data, value_input_option='USER_ENTERED')
         print(f"✨ {len(data)} 件のデータを「{sheet_name}」シートに書き込みました。")
         return True
     except Exception as e:
