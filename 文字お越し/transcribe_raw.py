@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import math
 import tkinter as tk
 from tkinter import filedialog
 from dotenv import load_dotenv
@@ -39,21 +40,50 @@ def transcribe_file(file_path):
         file_size_mb = os.path.getsize(temp_audio_path) / (1024 * 1024)
         print(f"  -> Extracted audio size: {file_size_mb:.2f} MB")
         
-        if file_size_mb > 25:
-            print("\n!!! WARNING: File size exceeds Groq API limit (25MB) !!!")
-            print("The process might fail or take a very long time. Please try a shorter file.")
-            # We continue anyway, but warn the user.
-
         # Step 2: Upload and Transcription
-        print(f"[Step 2/3] Uploading to Groq API and transcribing... (This may take a few minutes)")
+        print(f"[Step 2/3] Transcribing... (This may take a few minutes)")
         start_time = time.time()
         
-        with open(temp_audio_path, "rb") as file:
-            transcription = client.audio.transcriptions.create(
-                file=(temp_audio_path, file),
-                model="whisper-large-v3",
-                response_format="text",
-            )
+        max_size_mb = 24  # Safe limit slightly below 25MB
+        if file_size_mb > max_size_mb:
+            print(f"  -> File exceeds {max_size_mb}MB. Splitting audio into chunks...")
+            
+            # Calculate number of chunks needed
+            num_chunks = math.ceil(file_size_mb / max_size_mb)
+            chunk_length_ms = len(audio) // num_chunks
+            full_transcription = []
+
+            for i in range(num_chunks):
+                start_ms = i * chunk_length_ms
+                # Ensure the last chunk goes to the end of the file
+                end_ms = (i + 1) * chunk_length_ms if i < num_chunks - 1 else len(audio)
+                
+                chunk = audio[start_ms:end_ms]
+                chunk_path = f"temp_chunk_{i}.mp3"
+                chunk.export(chunk_path, format="mp3")
+                
+                print(f"    Processing chunk {i+1}/{num_chunks}...", end="\r")
+                
+                with open(chunk_path, "rb") as file:
+                    chunk_text = client.audio.transcriptions.create(
+                        file=(chunk_path, file),
+                        model="whisper-large-v3",
+                        response_format="text",
+                    )
+                    full_transcription.append(chunk_text)
+                
+                os.remove(chunk_path) # Clean up chunk file immediately
+            
+            transcription = "\n".join(full_transcription)
+            print(f"\n  -> All chunks processed.")
+        else:
+            # Single file processing
+            with open(temp_audio_path, "rb") as file:
+                transcription = client.audio.transcriptions.create(
+                    file=(temp_audio_path, file),
+                    model="whisper-large-v3",
+                    response_format="text",
+                )
         
         elapsed = time.time() - start_time
         print(f"  -> Transcription completed in {elapsed:.2f} seconds.")
