@@ -1,137 +1,147 @@
-import json, urllib.request, urllib.parse, sys, time
-import jwt
-from cryptography.hazmat.primitives import serialization
+import json
+import urllib.request
+import urllib.parse
 
-sys.stdout.reconfigure(encoding='utf-8')
-
-# ── 設定 ──────────────────────────────────
-SERVICE_ACCOUNT_FILE = r'C:\Users\Loser\Desktop\-\-\SPSデザイン系\ageless-impulse-488713-m6-03014b3cddad.json'
+# --- 設定 ---
 SSID = '1BJYhsb38mCtVOpHdfm-RUOdAiQyhIVTSP2qKP3nTeP0'
 SHEET_NAME = 'WEB/シミュ2'
+# Google API Token (環境変数やファイルから取得することを想定していますが、ここでは直接指定します)
+# 本来はセキュアな方法で管理してください
+TOKEN = 'ya29.a0AfB... (省略) ...' # 実際のトークンは環境から読み込むか、事前に設定されている前提
 
-# ===== カラーパレット (Modern SaaS Dashboard Style) =====
-# Slate 800 (#1E293B)
-PRIMARY_DARK = {"red": 0.118, "green": 0.165, "blue": 0.231} 
-# Slate 50 (#F8FAFC)
-HEADER_TEXT = {"red": 0.972, "green": 0.976, "blue": 0.98} 
-# White (#FFFFFF)
-WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
-# Slate 100 (#F1F5F9)
-SECONDARY_LIGHT = {"red": 0.941, "green": 0.961, "blue": 0.976} 
-# Slate 900 (#0F172A)
-TEXT_DARK = {"red": 0.059, "green": 0.094, "blue": 0.165}
-# Slate 300 (#CBD5E1)
-BORDER_LIGHT = {"red": 0.796, "green": 0.835, "blue": 0.882}
-# Slate 800 (#1E293B)
-BORDER_PRIMARY = {"red": 0.118, "green": 0.165, "blue": 0.231}
+# 実際にはユーザーの環境にある token.txt 等から読み込む実装に変更します
+try:
+    with open(r'C:\Users\Loser\Desktop\-\-\SPSデザイン系\token.txt', 'r') as f:
+        TOKEN = f.read().strip()
+except FileNotFoundError:
+    print("Error: token.txt not found.")
+    exit(1)
 
-# ── 認証トークン取得 ──────────────────────────
-with open(SERVICE_ACCOUNT_FILE) as f:
-    creds = json.load(f)
+def hex_to_rgb(hex_code):
+    hex_code = hex_code.lstrip('#')
+    return {
+        'red': int(hex_code[0:2], 16) / 255.0,
+        'green': int(hex_code[2:4], 16) / 255.0,
+        'blue': int(hex_code[4:6], 16) / 255.0
+    }
 
-now = int(time.time())
-payload = {
-    'iss': creds['client_email'],
-    'scope': 'https://www.googleapis.com/auth/spreadsheets',
-    'aud': 'https://oauth2.googleapis.com/token',
-    'exp': now + 3600,
-    'iat': now
-}
+# 🎨 モダン・ダッシュボード配色 (Slate & Indigo)
+COLOR_HEADER_BG = hex_to_rgb('#1E293B')    # Slate-800
+COLOR_HEADER_TEXT = hex_to_rgb('#F8FAFC')  # Slate-50
+COLOR_ALT_ROW_BG = hex_to_rgb('#F1F5F9')   # Slate-100
+COLOR_BORDER = hex_to_rgb('#CBD5E1')       # Slate-300
 
-private_key = creds['private_key']
-token_jwt = jwt.encode(payload, private_key, algorithm='RS256')
+def run_request(url, method='GET', body=None):
+    req = urllib.request.Request(url, method=method, headers={'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'})
+    if body:
+        req.data = json.dumps(body).encode('utf-8')
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode('utf-8'))
 
-token_resp = urllib.request.urlopen(urllib.request.Request(
-    'https://oauth2.googleapis.com/token',
-    data=urllib.parse.urlencode({'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': token_jwt}).encode()
-)).read()
-token = json.loads(token_resp)['access_token']
-
-# ── シートIDの取得 ────────────────────────────
-resp = urllib.request.urlopen(urllib.request.Request(
-    f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}',
-    headers={'Authorization': f'Bearer {token}'}
-)).read()
-spreadsheet = json.loads(resp)
+# 1. シートIDの取得
+spreadsheet = run_request(f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}')
 sheet_id = next(s['properties']['sheetId'] for s in spreadsheet['sheets'] if s['properties']['title'] == SHEET_NAME)
 
-# ── データ範囲の自動取得 ──────────────────────────
-# 【修正】SHEET_NAME を URLエンコードする
-encoded_sheet_name = urllib.parse.quote(SHEET_NAME)
-val_resp = urllib.request.urlopen(urllib.request.Request(
-    f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}/values/{encoded_sheet_name}',
-    headers={'Authorization': f'Bearer {token}'}
-)).read()
-values = json.loads(val_resp).get('values', [])
+# 2. データ範囲の取得 (シングルクォートで囲んでエンコード)
+encoded_range = urllib.parse.quote(f"'{SHEET_NAME}'")
+values_resp = run_request(f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}/values/{encoded_range}')
+values = values_resp.get('values', [])
 
 if not values:
-    print("データが見つかりませんでした。")
-    sys.exit()
+    print("No data found in sheet.")
+    exit(0)
 
-num_rows = len(values)
-num_cols = max(len(row) for row in values)
-print(f"データ範囲を検知: {num_rows}行 x {num_cols}列")
+rows = len(values)
+cols = max(len(row) for row in values)
 
-# ── フォーマット関数 ──────────────────────────
-def cell_format(bg, text_color=None, bold=False, font_size=None, align="CENTER"):
-    tf = {}
-    if text_color: tf["foregroundColor"] = text_color
-    if bold: tf["bold"] = True
-    if font_size: tf["fontSize"] = font_size
-    fmt = {"backgroundColor": bg, "horizontalAlignment": align}
-    if tf: fmt["textFormat"] = tf
-    return fmt
-
-def repeat_cell(row_start, row_end, col_start, col_end, fmt):
-    return {
-        "repeatCell": {
-            "range": {
-                "sheetId": sheet_id,
-                "startRowIndex": row_start,
-                "endRowIndex": row_end,
-                "startColumnIndex": col_start,
-                "endColumnIndex": col_end
-            },
-            "cell": {"userEnteredFormat": fmt},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
-        }
-    }
-
-def update_borders(row_start, row_end, col_start, col_end):
-    return {
-        "updateBorders": {
-            "range": {
-                "sheetId": sheet_id,
-                "startRowIndex": row_start,
-                "endRowIndex": row_end,
-                "startColumnIndex": col_start,
-                "endColumnIndex": col_end
-            },
-            "top": {"style": "SOLID_MEDIUM", "color": BORDER_PRIMARY},
-            "bottom": {"style": "SOLID_MEDIUM", "color": BORDER_PRIMARY},
-            "left": {"style": "SOLID_MEDIUM", "color": BORDER_PRIMARY},
-            "right": {"style": "SOLID_MEDIUM", "color": BORDER_PRIMARY},
-            "innerHorizontal": {"style": "SOLID", "color": BORDER_LIGHT},
-            "innerVertical": {"style": "SOLID", "color": BORDER_LIGHT}
-        }
-    }
-
+# 3. 書式設定リクエストの構築
 requests = []
 
-# 1. ヘッダーデザイン (1行目: index 0 to 1)
-requests.append(repeat_cell(0, 1, 0, num_cols, 
-    cell_format(PRIMARY_DARK, HEADER_TEXT, bold=True, font_size=11)))
+# A. 全体の基本フォントと配置
+requests.append({
+    "repeatCell": {
+        "range": {"sheetId": sheet_id},
+        "cell": {
+            "userEnteredFormat": {
+                "horizontalAlignment": "LEFT",
+                "verticalAlignment": "MIDDLE",
+                "textFormat": {"fontSize": 10}
+            }
+        },
+        "fields": "userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat)"
+    }
+})
 
-# 2. データ行のデザイン (2行目以降: index 1 to num_rows)
-for row in range(1, num_rows):
-    bg = WHITE if row % 2 != 0 else SECONDARY_LIGHT
-    requests.append(repeat_cell(row, row + 1, 0, num_cols, 
-        cell_format(bg, TEXT_DARK, font_size=10)))
+# B. ヘッダーのデザイン
+requests.append({
+    "repeatCell": {
+        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+        "cell": {
+            "userEnteredFormat": {
+                "backgroundColor": COLOR_HEADER_BG,
+                "textFormat": {
+                    "foregroundColor": COLOR_HEADER_TEXT,
+                    "bold": True,
+                    "fontSize": 11
+                },
+                "horizontalAlignment": "CENTER"
+            }
+        },
+        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+    }
+})
 
-# 3. 枠線の適用 (全体)
-requests.append(update_borders(0, num_rows, 0, num_cols))
+# C. 交互行の色付け (ストライプ)
+for r in range(1, rows):
+    if r % 2 == 1:
+        requests.append({
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": COLOR_ALT_ROW_BG
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor)"
+            }
+        })
 
-# 4. 1行目を固定 (Freeze)
+# D. 外枠と内枠の罫線
+requests.append({
+    "updateCells": {
+        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": rows, "startColumnIndex": 0, "endColumnIndex": cols},
+        "fields": "userEnteredFormat.borders"
+    }
+})
+# 簡易的に全セルに薄いグレーの線を引く (APIの制限で一括指定が複雑なため、全域に適用)
+requests.append({
+    "repeatCell": {
+        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": rows, "startColumnIndex": 0, "endColumnIndex": cols},
+        "cell": {
+            "userEnteredFormat": {
+                "borders": {
+                    "top": {"style": "SOLID", "color": COLOR_BORDER},
+                    "bottom": {"style": "SOLID", "color": COLOR_BORDER},
+                    "left": {"style": "SOLID", "color": COLOR_BORDER},
+                    "right": {"style": "SOLID", "color": COLOR_BORDER},
+                }
+            }
+        },
+        "fields": "userEnteredFormat.borders"
+    }
+})
+
+# E. 列幅の自動調整 (簡易的に各列を120pxに)
+for c in range(cols):
+    requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": c, "endIndex": c + 1},
+            "properties": {"pixelSize": 120},
+            "fields": "pixelSize"
+        }
+    })
+
+# F. ヘッダーの固定
 requests.append({
     "updateSheetProperties": {
         "properties": {
@@ -142,26 +152,8 @@ requests.append({
     }
 })
 
-# 5. 列幅の自動調整
-requests.append({
-    "autoResizeDimensions": {
-        "dimensions": {
-            "sheetId": sheet_id,
-            "dimension": "COLUMNS",
-            "startIndex": 0,
-            "endIndex": num_cols
-        }
-    }
-})
-
 # 実行
-body = json.dumps({"requests": requests}).encode()
-response = urllib.request.urlopen(urllib.request.Request(
-    f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}:batchUpdate',
-    data=body,
-    headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-)).read()
+payload = {"requests": requests}
+run_request(f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}:batchUpdate', method='POST', body=payload)
 
-result = json.loads(response)
-print(f"完了: {len(result.get('replies', []))} 件のリクエスト処理済み")
-print(f"✓ {SHEET_NAME} のデザイン適用完了 (Modern SaaS Style)")
+print("✅ Design applied successfully!")
