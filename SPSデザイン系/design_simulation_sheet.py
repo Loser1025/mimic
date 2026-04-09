@@ -1,25 +1,25 @@
-import json
 import os
-import urllib.request
+import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# ==========================================
-# 設定
-# ==========================================
-SSID = '1BJYhsb38mCtVOpHdfm-RUOdAiQyhIVTSP2qKP3nTeP0'
-SHEET_NAME = 'WEB/シミュ2'
+# ==============================================================================
+# 設定情報
+# ==============================================================================
+# 認証情報のパス
 SERVICE_ACCOUNT_FILE = r'C:\Users\Loser\Desktop\-\-\SPSデザイン系\ageless-impulse-488713-m6-03014b3cddad.json'
+# スプレッドシートID
+SSID = '1BJYhsb38mCtVOpHdfm-RUOdAiQyhIVTSP2qKP3nTeP0'
+# 対象シート名
+SHEET_NAME = 'WEB/シミュ2'
 
-# モダンUIカラーパレット (Slate-Indigo)
-COLOR_HEADER_BG = {"red": 0.117, "green": 0.165, "blue": 0.231}    # #1E293B (Slate-800)
-COLOR_HEADER_TEXT = {"red": 0.972, "green": 0.976, "blue": 0.98}   # #F8FAFC (Slate-50)
-COLOR_ALT_ROW = {"red": 0.941, "green": 0.961, "blue": 0.976}       # #F1F5F9 (Slate-100)
-COLOR_BORDER = {"red": 0.796, "green": 0.835, "blue": 0.882}       # #CBD5E1 (Slate-300)
+# カラーパレット (Modern Slate-Indigo)
+COLOR_HEADER_BG = {"red": 0.117, "green": 0.165, "blue": 0.231}  # Slate-800
+COLOR_HEADER_TEXT = {"red": 0.972, "green": 0.976, "blue": 0.98} # Slate-50
+COLOR_ALT_ROW = {"red": 0.941, "green": 0.961, "blue": 0.976}    # Slate-100
+COLOR_BORDER = {"red": 0.796, "green": 0.835, "blue": 0.882}     # Slate-300
 
-def main():
-    print(f"🚀 デザイン適用を開始します: {SHEET_NAME}")
-    
+def design_sheet():
     try:
         # 1. 認証
         creds = service_account.Credentials.from_service_account_file(
@@ -30,25 +30,16 @@ def main():
 
         # 2. シートIDの取得
         spreadsheet = service.spreadsheets().get(spreadsheetId=SSID).execute()
-        sheets = spreadsheet.get('sheets', [])
-        sheet_id = None
-        for s in sheets:
-            if s['properties']['title'] == SHEET_NAME:
-                sheet_id = s['properties']['sheetId']
-                break
+        sheet_id = next(s['properties']['sheetId'] for s in spreadsheet['sheets'] if s['properties']['title'] == SHEET_NAME)
         
-        if sheet_id is None:
-            print(f"❌ エラー: シート '{SHEET_NAME}' が見つかりませんでした。")
-            return
-
-        # 3. データの範囲を確認
+        # 3. データ範囲の特定 (A1形式で全データを取得してサイズを把握)
         result = service.spreadsheets().values().get(
             spreadsheetId=SSID, 
             range=f"'{SHEET_NAME}'"
         ).execute()
         values = result.get('values', [])
         if not values:
-            print("⚠️ データが空のため、デザイン適用をスキップします。")
+            print("❌ データが見つかりませんでした。")
             return
         
         row_count = len(values)
@@ -57,7 +48,7 @@ def main():
         # 4. デザインリクエストの構築
         requests = []
 
-        # --- ヘッダーデザイン ---
+        # --- ヘッダーのデザイン (1行目) ---
         requests.append({
             "repeatCell": {
                 "range": { "sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": col_count },
@@ -67,18 +58,6 @@ def main():
                         "textFormat": { "foregroundColor": COLOR_HEADER_TEXT, "bold": True },
                         "horizontalAlignment": "CENTER",
                         "verticalAlignment": "MIDDLE",
-                    }
-                },
-                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
-            }
-        })
-
-        # --- 全体の枠線 (Borders) ---
-        requests.append({
-            "repeatCell": {
-                "range": { "sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": row_count, "startColumnIndex": 0, "endColumnIndex": col_count },
-                "cell": {
-                    "userEnteredFormat": {
                         "borders": {
                             "top": {"style": "SOLID", "color": COLOR_BORDER},
                             "bottom": {"style": "SOLID", "color": COLOR_BORDER},
@@ -87,14 +66,31 @@ def main():
                         }
                     }
                 },
-                "fields": "userEnteredFormat.borders"
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,borders)"
             }
         })
 
-        # --- 交互行の色 (Alternating Colors) ---
-        # 注意: addConditionalFormatRule よりも setBasicFilter 等の機能があるが、
-        # シンプルに repeatCell で偶数行を塗るか、APIの 'addConditionalFormatRule' を使う。
-        # ここでは最も確実な 'addConditionalFormatRule' を使用して「偶数行」を塗りつぶす。
+        # --- データ行のデザイン (2行目以降) ---
+        requests.append({
+            "repeatCell": {
+                "range": { "sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": row_count, "startColumnIndex": 0, "endColumnIndex": col_count },
+                "cell": {
+                    "userEnteredFormat": {
+                        "horizontalAlignment": "LEFT",
+                        "verticalAlignment": "MIDDLE",
+                        "borders": {
+                            "top": {"style": "SOLID", "color": COLOR_BORDER},
+                            "bottom": {"style": "SOLID", "color": COLOR_BORDER},
+                            "left": {"style": "SOLID", "color": COLOR_BORDER},
+                            "right": {"style": "SOLID", "color": COLOR_BORDER},
+                        }
+                    }
+                },
+                "fields": "userEnteredFormat(horizontalAlignment,verticalAlignment,borders)"
+            }
+        })
+
+        # --- ストライプ(交互色)の設定 ---
         requests.append({
             "addConditionalFormatRule": {
                 "rule": {
@@ -108,37 +104,28 @@ def main():
             }
         })
 
-        # --- 行の固定 (Freeze) ---
+        # --- 1行目の固定 ---
         requests.append({
             "updateSheetProperties": {
-                "properties": {
-                    "sheetId": sheet_id,
-                    "gridProperties": { "frozenRowCount": 1 }
-                },
+                "properties": { "sheetId": sheet_id, "gridProperties": { "frozenRowCount": 1 } },
                 "fields": "gridProperties.frozenRowCount"
             }
         })
 
-        # --- 列幅の自動調整 (修正済みのフィールド名) ---
+        # --- 列幅の自動調整 (修正済み: autoResizeDimensions) ---
         requests.append({
             "autoResizeDimensions": {
-                "dimensions": {
-                    "sheetId": sheet_id,
-                    "dimension": "COLUMNS",
-                    "startIndex": 0,
-                    "endIndex": col_count
-                }
+                "dimensions": { "sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": col_count }
             }
         })
 
-        # 5. 一括適用
-        body = { "requests": requests }
+        # 5. 実行
+        body = {'requests': requests}
         service.spreadsheets().batchUpdate(spreadsheetId=SSID, body=body).execute()
-        
-        print("✅ デザインが正常に適用されました！")
+        print("✅ デザインの適用に成功しました！")
 
     except Exception as e:
         print(f"❌ エラー発生: {e}")
 
 if __name__ == '__main__':
-    main()
+    design_sheet()
