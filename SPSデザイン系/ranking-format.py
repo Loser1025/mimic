@@ -1,49 +1,70 @@
-import json, urllib.request, urllib.parse, sys
+import json, urllib.request, urllib.parse, sys, time
+import jwt # Now installed
+from cryptography.hazmat.primitives import serialization
+
 sys.stdout.reconfigure(encoding='utf-8')
 
-creds = json.load(open('C:/Users/弁護士法人響/.config/gws/authorized_user.json'))
-token = json.loads(urllib.request.urlopen(urllib.request.Request(
-    'https://oauth2.googleapis.com/token',
-    data=urllib.parse.urlencode({**creds, 'grant_type': 'refresh_token'}).encode()
-)).read())['access_token']
+# ── 設定 ──────────────────────────────────
+SERVICE_ACCOUNT_FILE = r'C:\Users\Loser\Desktop\-\-\SPSデザイン系\ageless-impulse-488713-m6-03014b3cddad.json'
+SSID = '1EmVvi7TwjrTc5Mx9wZjqo8G0ZCDrULUqPiD9oeDd97Y'
+SHEET_NAME = '約束集計表'
 
-ssid = '1d6_Q3ws9yIEbCUZAMfaWqb2rZ_fjrJdLqruMWucg3pU'
-sheet_id = 1925468628
+# 範囲設定 A2:O6
+# Row 2 -> index 1
+# Row 6 -> index 5 (inclusive), so endRowIndex = 6
+# Col A -> index 0
+# Col O -> index 14 (inclusive), so endColumnIndex = 15
+START_ROW = 1
+END_ROW = 6
+START_COL = 0
+END_COL = 15
 
 # ===== カラーパレット =====
-HEADER_BG    = {"red": 0.063, "green": 0.082, "blue": 0.208}  # #101535 最濃紺
-HEADER_TEXT  = {"red": 1.0,   "green": 1.0,   "blue": 1.0  }  # 白
-GOLD_BG      = {"red": 1.0,   "green": 0.800, "blue": 0.0  }  # #FFCC00 金（濃いめ）
-GOLD_TEXT    = {"red": 0.133, "green": 0.133, "blue": 0.133}  # 濃グレー
-SILVER_BG    = {"red": 0.620, "green": 0.620, "blue": 0.620}  # #9E9E9E 銀（濃いめ）
-SILVER_TEXT  = {"red": 1.0,   "green": 1.0,   "blue": 1.0  }  # 白
-BRONZE_BG    = {"red": 0.627, "green": 0.322, "blue": 0.176}  # #A0522D 銅（濃いめ）
-BRONZE_TEXT  = {"red": 1.0,   "green": 1.0,   "blue": 1.0  }  # 白
-TOP_BG       = {"red": 0.086, "green": 0.396, "blue": 0.753}  # #1565C0 4-6位（濃青）
-TOP_TEXT     = {"red": 1.0,   "green": 1.0,   "blue": 1.0  }  # 白
-MID_BG       = {"red": 0.878, "green": 0.929, "blue": 0.996}  # #E0EDF9 中位（薄青）
-BOTTOM_BG    = {"red": 0.898, "green": 0.224, "blue": 0.208}  # #E53935 下位6人（赤）
-BOTTOM_TEXT  = {"red": 1.0,   "green": 1.0,   "blue": 1.0  }  # 白
-DARK_TEXT    = {"red": 0.133, "green": 0.133, "blue": 0.133}
+NAVY_DARK    = {"red": 0.17, "green": 0.24, "blue": 0.31}  # #2B3E4F
+NAVY_LIGHT   = {"red": 0.94, "green": 0.96, "blue": 0.98}  # #F0F5FA
+WHITE        = {"red": 1.0,   "green": 1.0,   "blue": 1.0  }
+DARK_TEXT    = {"red": 0.1,   "green": 0.1,   "blue": 0.2  }
+BORDER_COLOR = {"red": 0.7,   "green": 0.7,   "blue": 0.7  }
 
-BORDER_OUTER = {"red": 0.063, "green": 0.082, "blue": 0.208}  # ヘッダーと同色
-BORDER_INNER = {"red": 0.565, "green": 0.694, "blue": 0.820}  # #90B1D1
+# ── 認証トークン取得 ──────────────────────────
+with open(SERVICE_ACCOUNT_FILE) as f:
+    creds = json.load(f)
 
+now = int(time.time())
+payload = {
+    'iss': creds['client_email'],
+    'scope': 'https://www.googleapis.com/auth/spreadsheets',
+    'aud': 'https://oauth2.googleapis.com/token',
+    'exp': now + 3600,
+    'iat': now
+}
 
-def border(color, style="SOLID"):
-    return {"style": style, "color": color}
+# 秘密鍵の読み込みと署名
+private_key = creds['private_key']
+token_jwt = jwt.encode(payload, private_key, algorithm='RS256')
 
+token_resp = urllib.request.urlopen(urllib.request.Request(
+    'https://oauth2.googleapis.com/token',
+    data=urllib.parse.urlencode({'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': token_jwt}).encode()
+)).read()
+token = json.loads(token_resp)['access_token']
+
+# ── シートIDの取得 ────────────────────────────
+resp = urllib.request.urlopen(urllib.request.Request(
+    f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}',
+    headers={'Authorization': f'Bearer {token}'}
+)).read()
+spreadsheet = json.loads(resp)
+sheet_id = next(s['properties']['sheetId'] for s in spreadsheet['sheets'] if s['properties']['title'] == SHEET_NAME)
+
+# ── フォーマット関数 ──────────────────────────
 def cell_format(bg, text_color=None, bold=False, font_size=None, align="CENTER"):
     tf = {}
-    if text_color:
-        tf["foregroundColor"] = text_color
-    if bold:
-        tf["bold"] = True
-    if font_size:
-        tf["fontSize"] = font_size
+    if text_color: tf["foregroundColor"] = text_color
+    if bold: tf["bold"] = True
+    if font_size: tf["fontSize"] = font_size
     fmt = {"backgroundColor": bg, "horizontalAlignment": align}
-    if tf:
-        fmt["textFormat"] = tf
+    if tf: fmt["textFormat"] = tf
     return fmt
 
 def repeat_cell(row_start, row_end, col_start, col_end, fmt):
@@ -62,8 +83,6 @@ def repeat_cell(row_start, row_end, col_start, col_end, fmt):
     }
 
 def update_borders(row_start, row_end, col_start, col_end):
-    outer = border(BORDER_OUTER, "SOLID_MEDIUM")
-    inner = border(BORDER_INNER, "SOLID")
     return {
         "updateBorders": {
             "range": {
@@ -73,122 +92,38 @@ def update_borders(row_start, row_end, col_start, col_end):
                 "startColumnIndex": col_start,
                 "endColumnIndex": col_end
             },
-            "top": outer, "bottom": outer, "left": outer, "right": outer,
-            "innerHorizontal": inner, "innerVertical": inner
+            "top": {"style": "SOLID_MEDIUM", "color": NAVY_DARK},
+            "bottom": {"style": "SOLID_MEDIUM", "color": NAVY_DARK},
+            "left": {"style": "SOLID_MEDIUM", "color": NAVY_DARK},
+            "right": {"style": "SOLID_MEDIUM", "color": NAVY_DARK},
+            "innerHorizontal": {"style": "SOLID", "color": BORDER_COLOR},
+            "innerVertical": {"style": "SOLID", "color": BORDER_COLOR}
         }
     }
 
-def format_table(header_row, data_start, data_end, col_count):
-    """ランキング表一つ分のフォーマットリクエストを生成"""
-    reqs = []
-    cols = col_count
-
-    # ヘッダー行
-    reqs.append(repeat_cell(header_row, header_row + 1, 0, cols,
-        cell_format(HEADER_BG, HEADER_TEXT, bold=True, font_size=11)))
-
-    # 1位（金）
-    reqs.append(repeat_cell(data_start, data_start + 1, 0, cols,
-        cell_format(GOLD_BG, GOLD_TEXT, bold=True, font_size=10)))
-
-    # 2位（銀）
-    reqs.append(repeat_cell(data_start + 1, data_start + 2, 0, cols,
-        cell_format(SILVER_BG, SILVER_TEXT, bold=True, font_size=10)))
-
-    # 3位（銅）
-    reqs.append(repeat_cell(data_start + 2, data_start + 3, 0, cols,
-        cell_format(BRONZE_BG, BRONZE_TEXT, bold=True, font_size=10)))
-
-    # 4-6位（濃青・上位ゾーン）
-    top6_end = data_start + 6
-    if data_start + 3 < top6_end:
-        reqs.append(repeat_cell(data_start + 3, top6_end, 0, cols,
-            cell_format(TOP_BG, TOP_TEXT, font_size=10)))
-
-    # 中位（7位〜下位6人の手前）
-    bottom6_start = max(top6_end, data_end - 6)
-    if top6_end < bottom6_start:
-        reqs.append(repeat_cell(top6_end, bottom6_start, 0, cols,
-            cell_format(MID_BG, DARK_TEXT, font_size=10)))
-
-    # 下位6人（赤・警戒ゾーン）
-    if bottom6_start < data_end:
-        reqs.append(repeat_cell(bottom6_start, data_end, 0, cols,
-            cell_format(BOTTOM_BG, BOTTOM_TEXT, bold=True, font_size=10)))
-
-    # 枠線（ヘッダー含む全体）
-    reqs.append(update_borders(header_row, data_end, 0, cols))
-
-    return reqs
-
-
 requests = []
 
-# ===== ベース背景色（全体に薄いスレートブルーを塗布） =====
-# 表のフォーマットが後から上書きするため、ギャップ行・右側列に残る
-BASE_BG = {"red": 0.910, "green": 0.929, "blue": 0.961}  # #E8EDF5 薄スレートブルー
-requests.append({
-    "repeatCell": {
-        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 130,
-                  "startColumnIndex": 0, "endColumnIndex": 15},
-        "cell": {"userEnteredFormat": {"backgroundColor": BASE_BG}},
-        "fields": "userEnteredFormat.backgroundColor"  # 背景色のみ変更・文字/値は保持
-    }
-})
+# 1. ヘッダー (A2:O2) -> index 1 to 2
+requests.append(repeat_cell(1, 2, 0, 15, 
+    cell_format(NAVY_DARK, WHITE, bold=True, font_size=11)))
 
-# ===== タイトル（結合セル B1:I3 = row 0-2, col 1-8） =====
-requests.append({
-    "repeatCell": {
-        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 3,
-                  "startColumnIndex": 1, "endColumnIndex": 9},
-        "cell": {
-            "userEnteredFormat": {
-                "backgroundColor": {"red": 0.063, "green": 0.082, "blue": 0.208},  # #101535
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment": "MIDDLE",
-                "textFormat": {
-                    "foregroundColor": {"red": 1.0, "green": 0.800, "blue": 0.0},  # #FFCC00 ゴールド
-                    "bold": True,
-                    "fontSize": 20,
-                    "fontFamily": "Arial"
-                }
-            }
-        },
-        "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"
-    }
-})
+# 2. データ行 (A3:O6) -> index 2 to 6
+for row in range(2, 6):
+    bg = WHITE if row % 2 == 0 else NAVY_LIGHT
+    requests.append(repeat_cell(row, row + 1, 0, 15, 
+        cell_format(bg, DARK_TEXT, font_size=10)))
 
-# ===== タイトルテキストに絵文字を追加 =====
-requests.append({
-    "updateCells": {
-        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
-                  "startColumnIndex": 1, "endColumnIndex": 2},
-        "rows": [{"values": [{"userEnteredValue": {"stringValue": "🏆 昇降格表3/16- 🏆"}}]}],
-        "fields": "userEnteredValue"
-    }
-})
+# 3. 枠線の適用 (A2:O6)
+requests.append(update_borders(1, 6, 0, 15))
 
-# ===== Table 1: あむA隊 =====
-# ヘッダー: 行5 (0-indexed: 4), データ: 行6-35 (0-indexed: 5-34)
-requests += format_table(header_row=4, data_start=5, data_end=35, col_count=9)
-
-# ===== Table 2: あむB隊 =====
-# ヘッダー: 行40 (0-indexed: 39), データ: 行41-59 (0-indexed: 40-59)
-requests += format_table(header_row=39, data_start=40, data_end=59, col_count=9)
-
-# ===== Table 3: あむC隊 =====
-# ヘッダー: 行76 (0-indexed: 75), データ: 行77-120 (0-indexed: 76-120)
-requests += format_table(header_row=75, data_start=76, data_end=120, col_count=8)
-
-print(f"リクエスト数: {len(requests)}")
-
+# 実行
 body = json.dumps({"requests": requests}).encode()
 response = urllib.request.urlopen(urllib.request.Request(
-    f'https://sheets.googleapis.com/v4/spreadsheets/{ssid}:batchUpdate',
+    f'https://sheets.googleapis.com/v4/spreadsheets/{SSID}:batchUpdate',
     data=body,
     headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
 )).read()
 
 result = json.loads(response)
 print(f"完了: {len(result.get('replies', []))} 件のリクエスト処理済み")
-print("✓ ランキング表デザイン適用完了")
+print("✓ 約束集計表 A2:O6 のデザイン適用完了")

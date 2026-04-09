@@ -20,7 +20,7 @@ CONFIG = {
     "USER_ID": "kogawa_flka",
     "PASSWORD": "kogawa0930",
     "DOWNLOAD_DIR": r"C:\Users\Loser\Desktop\-\-\LstepX\downloads",
-    "LOGIN_URL": "https://shindan-kh.com/management/index.php",
+    "LOGIN_URL": "https://manager.linestep.net/",
     "SPREADSHEET_ID": "1EmVvi7TwjrTc5Mx9wZjqo8G0ZCDrULUqPiD9oeDd97Y",
     "TARGET_SHEET": "登録数",
     "MAX_RETRIES": 3,
@@ -125,7 +125,7 @@ def download_csv(driver):
         time.sleep(7)
         
         logger.info("反響数ページへ直接移動中...")
-        driver.get("https://manager.linestep.net/line/board/edit/117510?group=0%EF%BC%94")
+        driver.get("https://manager.linestep.net/line/board/edit/117510?group=0")
         
         logger.info("抽出条件を設定中...")
         # 日付選択(終点) の input 要素を探してクリック
