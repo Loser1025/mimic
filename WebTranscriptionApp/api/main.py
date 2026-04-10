@@ -17,7 +17,7 @@ app.add_middleware(
 
 UPLOAD_DIR = "/tmp"
 
-@app.post("/transcribe")
+@app.post("/api/transcribe")
 async def transcribe(file: UploadFile = File(...)):
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     try:
