@@ -3662,11 +3662,12 @@ class AgentOrchestrator:
                                 prev_step.status = "retrying"
                                 if on_step:
                                     on_step(prev_step)
-                                prev_step.result = self.executor.run(
+                                prev_step.result = self.executor.run_stream(
                                     f"[Reviewer からのリトライ指示]\n{reason}\n\n"
                                     f"[全体タスク] {user_message}\n"
                                     f"[再実行ステップ] {prev_step.description}\n"
-                                    f"問題を修正して再度実行してください。"
+                                    f"問題を修正して再度実行してください。",
+                                    callback=on_token
                                 )
                                 prev_step.status = "done"
                                 if on_step:
