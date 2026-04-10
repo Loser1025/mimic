@@ -3529,6 +3529,7 @@ class AgentOrchestrator:
         user_message: str,
         final_result: str,
         steps: list["PlanStep"],
+        on_token=None,
     ) -> str:
         """
         Reflection Loop: 最終結果を振り返り、不備があれば Executor で修正する。
@@ -3551,9 +3552,10 @@ class AgentOrchestrator:
         if not ok and issue:
             log.info({"event": "reflection_correction", "issue": issue[:120]})
             print(C.yellow(f"  ↻ Reflection: 修正が必要です → {issue[:80]}"), flush=True)
-            corrected = self.executor.run(
+            corrected = self.executor.run_stream(
                 f"[Reflection による修正指示]\n{issue}\n\n"
-                f"上記の問題を修正して最終結果を出力してください。"
+                f"上記の問題を修正して最終結果を出力してください。",
+                callback=on_token
             )
             print(C.bold_green("  ✓ 修正完了"), flush=True)
             return corrected
