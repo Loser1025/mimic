@@ -44,7 +44,7 @@ async def transcribe(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/summarize")
+@app.post("/summarize")
 async def summarize(data: dict):
     text = data.get("text", "")
     if not text:
