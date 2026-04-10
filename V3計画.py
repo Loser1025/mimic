@@ -3734,7 +3734,7 @@ class AgentOrchestrator:
             f"タスク: {user_message}\n\n"
             + "\n\n".join(results)
         )
-        final_result = self.executor.run(summary_prompt)
+        final_result = self.executor.run_stream(summary_prompt, callback=on_token)
 
         # ── 6. Reflection Loop（RPD 無制限なので常時実行）──────────
         print(C.gray("\n  [Reflection: 最終結果を検証中...]"), flush=True)
