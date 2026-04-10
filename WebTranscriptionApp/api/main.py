@@ -1,13 +1,12 @@
+import os
+import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import shutil
-import os
-import uuid
-from processor import process_audio
+from api import processor
 
 app = FastAPI()
 
-# CORS設定（フロントエンドからのリクエストを許可）
+# CORS設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,31 +15,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 一時保存フォルダ
+# Vercel環境では /tmp ディレクトリのみ書き込み可能
 UPLOAD_DIR = "/tmp"
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
-    # ユニークなファイル名で保存
-    file_id = str(uuid.uuid4())
-    file_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
-    
     try:
+        # ファイルを一時保存
+        file_path = os.path.join(UPLOAD_DIR, file.filename)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # AI処理（文字起こし -> 整形）
-        result = process_audio(file_path)
+        # 文字起こしと整形処理を実行
+        result = processor.process_audio(file_path)
+        
+        # 一時ファイルを削除
+        os.remove(file_path)
+        
         return result
-
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
-    finally:
-        # 使用後、一時ファイルを削除
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
 if __name__ == "__main__":
     import uvicorn
