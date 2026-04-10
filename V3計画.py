@@ -3707,11 +3707,12 @@ class AgentOrchestrator:
                         print(C.yellow(
                             f"  ↻ Reviewer(Step {prev_step.index}): {reason[:80]}"
                         ), flush=True)
-                        correction_result = self.executor.run(
+                        correction_result = self.executor.run_stream(
                             f"[Reviewer からの修正指示]\n{reason}\n\n"
                             f"[全体タスク] {user_message}\n"
                             f"[修正対象ステップ] {prev_step.description}\n"
-                            f"問題を修正してください。"
+                            f"問題を修正してください。",
+                            callback=on_token
                         )
                         steps.append(PlanStep(
                             index=len(steps) + 1,
