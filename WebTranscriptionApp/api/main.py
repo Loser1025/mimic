@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import shutil
 import json
-from . import processor
+import processor
 
 app = FastAPI()
 
