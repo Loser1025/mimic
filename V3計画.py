@@ -2307,12 +2307,10 @@ class GeminiAgent:
 
         raise RuntimeError(f"API呼び出し最大リトライ数 ({MAX_RETRIES}) を超えました")
 
-    def _stream_react_call(self, messages: list) -> tuple[str, list]:
+    def _stream_react_call(self, messages: list, callback=None) -> tuple[str, list]:
         """
-        ReAct 専用ストリーミング API 呼び出し。
-        テキストチャンクをリアルタイムで端末に表示しながら (full_text, tool_calls) を返す。
-
-        Ctrl+C 割り込み時は ("__interrupted__", []) を返す。
+        ストリーミング API 呼び出し。
+        テキストチャンクを callback 経由で送信し、(full_text, tool_calls) を返す。
         """
         tool_specs = self.tools.get_specs()
         effective_thinking = "HIGH" if self.thinking_enabled else "NONE"
@@ -2345,29 +2343,26 @@ class GeminiAgent:
                           "msg_count": len(working_messages)})
 
                 full_text:  str       = ""
-                # ツール呼び出しをリストで管理（同一ツールの複数呼び出しに対応）
                 tool_calls_list: list[dict] = []
-                header_printed        = False  # 💭 プレフィックス表示済みフラグ
+                header_sent         = False
 
                 try:
                     for text_chunk, chunk_tools, _ in _stream_gemini_api(
                         account, working_messages, tool_specs, self.system_prompt
                     ):
                         if text_chunk:
-                            if not header_printed:
-                                # 最初のテキストチャンク直前に 💭 を表示
-                                print(f"\n  {C.purple('💭')} ", end="", flush=True)
-                                header_printed = True
-                            print(C.purple(text_chunk), end="", flush=True)
+                            if callback:
+                                if not header_sent:
+                                    callback(f"\n  {C.purple('💭')} ")
+                                    header_sent = True
+                                callback(C.purple(text_chunk))
                             full_text += text_chunk
                         for ct in chunk_tools:
                             name = ct.get("name")
                             args = ct.get("args", {})
-                            # 名前があれば新規のツール呼び出しとして追加
                             if name:
                                 tool_calls_list.append({"name": name, "args": dict(args)})
                             elif tool_calls_list:
-                                # 名前が無い場合は最後の呼び出しの引数に追記（ストリーミング対応）
                                 tool_calls_list[-1]["args"].update(args)
 
                 except KeyboardInterrupt:
@@ -2375,8 +2370,8 @@ class GeminiAgent:
                           flush=True)
                     return "__interrupted__", []
 
-                if header_printed:
-                    print()  # ストリーム末尾の改行
+                if header_sent and callback:
+                    callback("\n")
 
                 tool_calls = tool_calls_list
                 log.info({"event": "api_ok_stream", "account": account.name,
