@@ -2539,103 +2539,111 @@ class GeminiAgent:
         print(C.cyan(f"    → {len(result_str)}文字 取得"), flush=True)
         return fn_name, result_str
 
-    def run(self, user_message: str) -> str:
-        """
-        エージェントループのエントリポイント。
-        user_message に対して最終応答を文字列で返す。
-        """
-        # 必要に応じて会話を圧縮
-        self._compact_if_needed()
+def run(self, user_message: str) -> str:
+    """
+    エージェントループのエントリポイント。
+    user_message に対して最終応答を文字列で返す。
+    """
+    # 内部の run_stream を利用し、ストリーミングなしとして動作させる
+    return self.run_stream(user_message, callback=None)
 
-        # コンテキストヘッダー（作業フォルダ・タスクゴール）をユーザーメッセージの先頭に付加
-        context_header = self._build_context_header()
-        task_ctx = self._task_context()
-        prefix_parts = [p for p in [context_header, task_ctx] if p]
-        if prefix_parts:
-            augmented_message = "\n\n".join(prefix_parts) + "\n\n" + user_message
-        else:
-            augmented_message = user_message
+def run_stream(self, user_message: str, callback=None) -> str:
+    """
+    エージェントループのストリーミング版。
+    AIの生成トークンを callback に逐次送信し、最終応答を文字列で返す。
+    """
+    # 必要に応じて会話を圧縮
+    self._compact_if_needed()
 
-        # 会話履歴を構築（system_prompt は _call_gemini_api で systemInstruction として送信）
-        messages: list[dict] = []
-        messages.extend(self.conversation)
-        old_conv_len = len(self.conversation)  # ツール実行履歴保存用にターン開始時の長さを記録
-        messages.append({"role": "user", "content": augmented_message})
+    # コンテキストヘッダー（作業フォルダ・タスクゴール）をユーザーメッセージの先頭に付加
+    context_header = self._build_context_header()
+    task_ctx = self._task_context()
+    prefix_parts = [p for p in [context_header, task_ctx] if p]
+    if prefix_parts:
+        augmented_message = "\n\n".join(prefix_parts) + "\n\n" + user_message
+    else:
+        augmented_message = user_message
 
-        tool_round = 0
+    # 会話履歴を構築
+    messages: list[dict] = []
+    messages.extend(self.conversation)
+    old_conv_len = len(self.conversation)
+    messages.append({"role": "user", "content": augmented_message})
 
-        while tool_round < MAX_TOOL_ROUNDS:
-            response = self._api_call_with_retry(messages)
-            finish = self._finish_reason(response)
-            text = self._extract_text(response)
-            tool_calls = self._extract_tool_calls(response)
+    tool_round = 0
 
-            log.info({"event": "response", "finish_reason": finish,
-                      "has_text": text is not None,
-                      "tool_calls": len(tool_calls)})
+    while tool_round < MAX_TOOL_ROUNDS:
+        # ── ストリーミング生成 ─────────────────────────────────────
+        # _stream_react_call を使用してトークンを callback に流し、結果を受け取る
+        text, tool_calls = self._stream_react_call(messages, callback=callback)
 
-            # ── ツール呼び出しがある場合 ──
-            if tool_calls and finish in ("STOP", "TOOL_CALLS", "OTHER", ""):
-                tool_round += 1
-                if tool_round > MAX_TOOL_ROUNDS:
-                    log.warning({"event": "tool_limit_reached"})
-                    break
+        if text == "__interrupted__":
+            return "ユーザーによって中断されました"
 
-                # アシスタントの応答をメッセージ履歴に追加（functionCall 正式形式）
-                messages.append({
-                    "role": "assistant",
-                    "content": text or "",
-                    "function_calls": [
-                        {"name": tc["name"], "args": tc.get("args", {})}
-                        for tc in tool_calls
-                    ],
-                })
+        log.info({"event": "response_stream", "has_text": text is not None,
+                  "tool_calls": len(tool_calls)})
 
-                # ── ツール実行（複数なら並列）─────────────────────────
-                if len(tool_calls) > 1:
-                    print(C.orange(f"  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
-                    ordered: list[Optional[dict]] = [None] * len(tool_calls)
-                    with ThreadPoolExecutor(max_workers=len(tool_calls)) as tpool:
-                        fmap = {
-                            tpool.submit(self._run_single_tool, tc): i
-                            for i, tc in enumerate(tool_calls)
+        # ── ツール呼び出しがある場合 ──
+        if tool_calls:
+            tool_round += 1
+            if tool_round > MAX_TOOL_ROUNDS:
+                log.warning({"event": "tool_limit_reached"})
+                break
+
+            # アシスタントの応答をメッセージ履歴に追加
+            messages.append({
+                "role": "assistant",
+                "content": text or "",
+                "function_calls": [
+                    {"name": tc["name"], "args": tc.get("args", {})}
+                    for tc in tool_calls
+                ],
+            })
+
+            # ── ツール実行（複数なら並列）─────────────────────────
+            if len(tool_calls) > 1:
+                print(C.orange(f"  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
+                ordered: list[Optional[dict]] = [None] * len(tool_calls)
+                with ThreadPoolExecutor(max_workers=len(tool_calls)) as tpool:
+                    fmap = {
+                        tpool.submit(self._run_single_tool, tc): i
+                        for i, tc in enumerate(tool_calls)
+                    }
+                    for f in as_completed(fmap):
+                        idx = fmap[f]
+                        fn_name, result_str = f.result()
+                        ordered[idx] = {
+                            "tool": fn_name,
+                            "result": result_str[:TOOL_OUTPUT_LIMIT],
                         }
-                        for f in as_completed(fmap):
-                            idx = fmap[f]
-                            fn_name, result_str = f.result()
-                            ordered[idx] = {
-                                "tool": fn_name,
-                                "result": result_str[:TOOL_OUTPUT_LIMIT],
-                            }
-                    tool_results = ordered  # type: ignore
-                else:
-                    fn_name, result_str = self._run_single_tool(tool_calls[0])
-                    tool_results = [{"tool": fn_name,
-                                     "result": result_str[:TOOL_OUTPUT_LIMIT]}]
+                tool_results = ordered  # type: ignore
+            else:
+                fn_name, result_str = self._run_single_tool(tool_calls[0])
+                tool_results = [{"tool": fn_name,
+                                 "result": result_str[:TOOL_OUTPUT_LIMIT]}]
 
-                # ツール結果を functionResponse 正式形式でメッセージに追加
-                messages.append({
-                    "role": "user",
-                    "content": "",
-                    "function_results": [
-                        {"name": r["tool"], "result": r["result"]}
-                        for r in tool_results
-                    ],
-                })
-                continue
+            # ツール結果をメッセージに追加
+            messages.append({
+                "role": "user",
+                "content": "",
+                "function_results": [
+                    {"name": r["tool"], "result": r["result"]}
+                    for r in tool_results
+                ],
+            })
+            continue
 
-            # ── 最終応答 ──
-            final_text = text or "(応答なし)"
+        # ── 最終応答 ──
+        final_text = text or "(応答なし)"
 
-            # 会話履歴を更新（ツール実行履歴を含む全ターンを保存）
-            # old_conv_len+1 以降 = ツール交換メッセージ（augmented_userの次から）
-            self.conversation.append({"role": "user", "content": user_message})
-            self.conversation.extend(messages[old_conv_len + 1:])
-            self.conversation.append({"role": "assistant", "content": final_text})
+        # 会話履歴を更新
+        self.conversation.append({"role": "user", "content": user_message})
+        self.conversation.extend(messages[old_conv_len + 1:])
+        self.conversation.append({"role": "assistant", "content": final_text})
 
-            return final_text
+        return final_text
 
-        return "エラー: ツール呼び出しの上限に達しました"
+    return "エラー: ツール呼び出しの上限に達しました"
 
     def clear_history(self):
         self.conversation = []
