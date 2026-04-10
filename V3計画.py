@@ -3444,7 +3444,11 @@ class AgentOrchestrator:
                           "reason": reason, "retry": retry})
                 if on_step:
                     on_step(step)
-                step.result = agent.run(exec_prompt)
+                # ストリーミングリトライ
+                step.result = agent.run_stream(
+                    exec_prompt,
+                    callback=lambda t: on_step(step, token=t) if on_step else None
+                )
                 step.status = "done"
                 if on_step:
                     on_step(step)
