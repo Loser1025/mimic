@@ -3566,6 +3566,7 @@ class AgentOrchestrator:
         user_message: str,
         on_plan=None,
         on_step=None,
+        on_token=None,
     ) -> str:
         """
         Plan-and-Execute + 並列実行 + Reflection Loop のメインループ。
