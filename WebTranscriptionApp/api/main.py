@@ -52,8 +52,8 @@ async def summarize(data: dict):
     
     async def event_generator():
         try:
-            # processor.format_text_with_gemini_stream を使用してストリーミング返却
-            for chunk in processor.format_text_with_gemini_stream(text):
+            # Groq Llama 3 を使用してストリーミング返却
+            for chunk in processor.format_text_with_groq_stream(text):
                 yield f"data: {json.dumps({'type': 'formatted', 'text': chunk})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
