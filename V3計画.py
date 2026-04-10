@@ -4063,8 +4063,14 @@ def _run_plan_ui(orchestrator: "AgentOrchestrator", task: str):
         print(f"  {icon} {label}{step.description}{parallel_tag}", flush=True)
 
     try:
-        result = orchestrator.run_with_plan(task, on_plan=on_plan, on_step=on_step)
-        print(f"\n{C.green_dim('┌─')} {C.bold_green('完了')}")
+        # 最終まとめ等のストリーミング用コールバック
+        def on_token(t):
+            print(t, end="", flush=True)
+
+        result = orchestrator.run_with_plan(
+            task, on_plan=on_plan, on_step=on_step, on_token=on_token
+        )
+        print(f"\n\n{C.green_dim('┌─')} {C.bold_green('完了')}")
         print(render_markdown(result))
         print(C.green_dim("└" + "─" * 20) + "\n")
     except Exception as e:
