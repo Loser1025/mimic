@@ -3400,7 +3400,11 @@ class AgentOrchestrator:
             f"[現在のステップ {step.index}/{len(all_steps)}] {step.description}\n"
             f"このステップのみを実行してください。"
         )
-        step.result = agent.run(exec_prompt)
+        # ストリーミング実行
+        step.result = agent.run_stream(
+            exec_prompt,
+            callback=lambda t: on_step(step, token=t) if on_step else None
+        )
         step.status = "done"
         if on_step:
             on_step(step)
