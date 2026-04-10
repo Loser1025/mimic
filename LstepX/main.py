@@ -24,7 +24,9 @@ CONFIG = {
     "SPREADSHEET_ID": "1EmVvi7TwjrTc5Mx9wZjqo8G0ZCDrULUqPiD9oeDd97Y",
     "TARGET_SHEET": "登録数",
     "MAX_RETRIES": 3,
-    "RETRY_DELAY": 5 # 初回リトライ待機秒数
+    "RETRY_DELAY": 5, # 初回リトライ待機秒数
+    "UI_TIMEOUT": 30, # UI要素の最大待機時間 (秒)
+    "CALCULATION_WAIT": 45 # 再計算の完了待ち時間 (秒)
 }
 
 # ログ設定
