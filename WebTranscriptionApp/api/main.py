@@ -17,8 +17,7 @@ app.add_middleware(
 )
 
 # 一時保存フォルダ
-UPLOAD_DIR = "temp_audio"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_DIR = "/tmp"
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
