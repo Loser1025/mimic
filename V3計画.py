@@ -4038,7 +4038,11 @@ def _run_plan_ui(orchestrator: "AgentOrchestrator", task: str):
         print(C.green_dim("└" + "─" * 30))
         print()
 
-    def on_step(step):
+    def on_step(step, token=None):
+        if token is not None:
+            print(token, end="", flush=True)
+            return
+
         icons = {
             "running":  C.green("▶"),
             "done":     C.bold_green("✓"),
