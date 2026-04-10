@@ -3740,7 +3740,7 @@ class AgentOrchestrator:
 
         # ── 6. Reflection Loop（RPD 無制限なので常時実行）──────────
         print(C.gray("\n  [Reflection: 最終結果を検証中...]"), flush=True)
-        final_result = self._reflect_and_correct(user_message, final_result, steps)
+        final_result = self._reflect_and_correct(user_message, final_result, steps, on_token=on_token)
 
         return final_result
 
