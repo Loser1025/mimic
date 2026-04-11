@@ -120,7 +120,6 @@ async def read_index():
 @app.post("/transcribe")
 @app.post("/api/transcribe")
 async def transcribe_root(file: UploadFile = File(...)):
-    print(f"\n>>> [SERVER] Received transcription request: {file.filename}")
     try:
         return await handle_transcribe(file)
     except Exception as e:
@@ -131,26 +130,6 @@ async def transcribe_root(file: UploadFile = File(...)):
             status_code=500, 
             detail={"error": "UnhandledException", "message": str(e), "traceback": traceback.format_exc()}
         )
-
-@app.post("/summarize")
-@app.post("/api/summarize")
-async def summarize_root(data: dict):
-    if processor is None:
-        raise HTTPException(status_code=500, detail={"error": "ProcessorLoadError", "details": IMPORT_ERROR})
-    
-    text = data.get("text", "")
-    if not text:
-        raise HTTPException(status_code=400, detail="Text is required for summarization")
-    
-    async def event_generator():
-        try:
-            # 同期ストリームを非同期に変換
-            for chunk in await run_in_threadpool(lambda: list(processor.format_text_with_groq_stream(text))):
-                yield f"data: {json.dumps({'type': 'formatted', 'text': chunk})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'text': f'Summarize Error: {str(e)}'})}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/health")
 @app.get("/health/")
