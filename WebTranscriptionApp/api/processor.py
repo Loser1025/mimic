@@ -18,14 +18,17 @@ def transcribe_audio(file_path):
         return "文字起こしエラー: GROQ_API_KEY が設定されていません。Vercel の環境変数を確認してください。"
     
     try:
+        print(f"[Groq API] Requesting transcription for: {file_path}")
         with open(file_path, "rb") as file:
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(file_path), file.read()),
                 model="whisper-large-v3",
                 response_format="text",
             )
+        print(f"[Groq API] Success: {len(transcription)} chars received")
         return transcription
     except Exception as e:
+        print(f"[Groq API] Error: {str(e)}")
         return f"文字起こしエラー: {str(e)}"
 
 def format_text_with_groq_stream(text):
