@@ -9,6 +9,8 @@ import uuid
 import sys
 import traceback
 import uvicorn
+import webbrowser
+from threading import Timer
 
 # Vercel環境で同じディレクトリのモジュール（processor.py）を読み込めるようにパスを追加
 current_dir = os.path.dirname(os.path.abspath(__file__))
