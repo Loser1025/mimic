@@ -4,14 +4,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Groq client
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+def get_groq_client():
+    """APIキーを確認してGroqクライアントを返す"""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return None
+    return Groq(api_key=api_key)
 
 def transcribe_audio(file_path):
     """Groq Whisperを使って文字起こしを行う"""
+    client = get_groq_client()
+    if not client:
+        return "文字起こしエラー: GROQ_API_KEY が設定されていません。Vercel の環境変数を確認してください。"
+    
     try:
         with open(file_path, "rb") as file:
-            transcription = groq_client.audio.transcriptions.create(
+            transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(file_path), file.read()),
                 model="whisper-large-v3",
                 response_format="text",
@@ -22,13 +30,14 @@ def transcribe_audio(file_path):
 
 def format_text_with_groq_stream(text):
     """Groq Llama 3 を使って文字起こし結果をストリーミング整形する"""
-    if not os.getenv("GROQ_API_KEY"):
-        yield "エラー: GROQ_API_KEYが設定されていません。"
+    client = get_groq_client()
+    if not client:
+        yield "エラー: GROQ_API_KEY が設定されていません。"
         return
 
     try:
         # Llama 3 などの強力なモデルを使用して整形
-        completion = groq_client.chat.completions.create(
+        completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {
@@ -55,8 +64,11 @@ def process_audio(file_path):
     
     # 非同期ストリームを同期的に処理して結合
     formatted_chunks = []
-    for chunk in format_text_with_groq_stream(raw_text):
-        formatted_chunks.append(chunk)
+    client = get_groq_client()
+    if client:
+        for chunk in format_text_with_groq_stream(raw_text):
+            formatted_chunks.append(chunk)
+    
     formatted_text = "".join(formatted_chunks)
     
     return {
