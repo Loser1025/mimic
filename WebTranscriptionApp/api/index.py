@@ -168,6 +168,9 @@ async def health_check():
     }
 
 if __name__ == "__main__":
+    # サーバーが起動し始める頃にブラウザを自動で開く (2秒後)
+    Timer(2.0, lambda: webbrowser.open("http://localhost:8000")).start()
+    
     # ローカルで実行する場合のデフォルト設定
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
