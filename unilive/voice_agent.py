@@ -694,23 +694,40 @@ async def run_voice_mode(cfg: dict) -> None:
         safe_print(C.bold_green("  接続完了！"))
         safe_print(C.gray("  話しかけてください。Ctrl+C で終了\n"))
 
-        input_stream  = sd.RawInputStream(
-            samplerate=INPUT_RATE, channels=1, dtype="int16",
-            blocksize=CHUNK, callback=mic_callback,
-        )
-        output_stream = sd.RawOutputStream(
-            samplerate=OUTPUT_RATE, channels=1, dtype="int16",
-        )
-        input_stream.start()
-        output_stream.start()
+        import queue as _queue_mod
 
-        # 音声出力用キュー（receive_loop をブロックしないよう分離）
-        audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        # 音声出力を asyncio の外で行うスレッドセーフキュー
+        audio_out_q: "_queue_mod.Queue[bytes | None]" = _queue_mod.Queue()
 
         # 教訓抽出用バッファ
         _current_user_transcript: list[str] = []
         _current_ai_response:     list[str] = []
 
+        # ── 音声再生スレッド（asyncio と完全分離）────────────────
+        def _playback_thread():
+            with sd.RawOutputStream(
+                samplerate=OUTPUT_RATE, channels=1, dtype="int16"
+            ) as out:
+                while True:
+                    chunk = audio_out_q.get()
+                    if chunk is None:   # 終了シグナル
+                        break
+                    try:
+                        out.write(chunk)
+                    except Exception:
+                        pass
+
+        pb_thread = threading.Thread(target=_playback_thread, daemon=True)
+        pb_thread.start()
+
+        # ── マイク入力ストリーム ──────────────────────────────────
+        input_stream = sd.RawInputStream(
+            samplerate=INPUT_RATE, channels=1, dtype="int16",
+            blocksize=CHUNK, callback=mic_callback,
+        )
+        input_stream.start()
+
+        # ── 送信ループ ────────────────────────────────────────────
         async def send_loop():
             while True:
                 pcm = await mic_queue.get()
@@ -718,74 +735,61 @@ async def run_voice_mode(cfg: dict) -> None:
                     audio=types.Blob(data=pcm, mime_type="audio/pcm")
                 )
 
-        async def playback_loop():
-            """audio_queue から音声を取り出してスピーカーに書き込む（非ブロッキング）"""
-            while True:
-                chunk = await audio_queue.get()
-                await asyncio.to_thread(output_stream.write, chunk)
-
-        def _extract_audio(response) -> bytes | None:
-            """
-            SDK バージョン差異を吸収して音声バイトを取り出す。
-            response.data → server_content の inline_data の順に試みる。
-            """
-            # 新しい SDK: response.data に直接入っている
-            if response.data:
-                return response.data
-            # inline_data 形式（警告が出るケース）
-            sc = response.server_content
-            if sc and sc.model_turn:
-                for part in sc.model_turn.parts or []:
-                    if hasattr(part, "inline_data") and part.inline_data:
-                        return part.inline_data.data
-            return None
-
+        # ── 受信ループ（response.data / response.text を使わず
+        #                server_content を直接参照して警告を回避）──
         async def receive_loop():
             async for response in session.receive():
 
-                # ツール呼び出し → V4 で実行
+                # ツール呼び出し
                 if response.tool_call:
                     await handle_tool_calls(session, response.tool_call, executor)
+                    continue
 
-                # 音声 → キューに積む（ブロッキング write はしない）
-                audio = _extract_audio(response)
-                if audio:
-                    await audio_queue.put(audio)
-
-                # テキスト字幕
-                if response.text:
-                    safe_print(f"\r  {C.bold_purple('[AI]')} {response.text}",
-                               end="", flush=True)
-                    _current_ai_response.append(response.text)
-
-                # server_content から transcription / ターン終了を取得
                 sc = response.server_content
-                if sc:
-                    # ユーザーの音声テキスト
-                    it = getattr(sc, "input_transcription", None)
-                    if it:
-                        text = getattr(it, "text", str(it)).strip()
-                        if text:
-                            _current_user_transcript.append(text)
-                            safe_print(C.gray(f"\r  [あなた] {text}"), flush=True)
+                if not sc:
+                    continue
 
-                    # ターン終了 → 教訓抽出
-                    if getattr(sc, "turn_complete", False):
-                        safe_print()
-                        user_text = " ".join(_current_user_transcript).strip()
-                        ai_text   = "".join(_current_ai_response).strip()
-                        if user_text and ai_text and len(executor.react_log.entries) > 0:
-                            executor.post_task(user_text, ai_text, [])
-                        _current_user_transcript.clear()
-                        _current_ai_response.clear()
+                # 音声データ（inline_data から直接取り出す）
+                if sc.model_turn:
+                    for part in (sc.model_turn.parts or []):
+                        idata = getattr(part, "inline_data", None)
+                        if idata and getattr(idata, "data", None):
+                            audio_out_q.put(idata.data)
+
+                # ユーザー発話のテキスト
+                it = getattr(sc, "input_transcription", None)
+                if it:
+                    text = getattr(it, "text", "").strip()
+                    if text:
+                        _current_user_transcript.append(text)
+                        safe_print(C.gray(f"\r  [あなた] {text}"), flush=True)
+
+                # AI 出力のテキスト（OUTPUT_TRANSCRIPTION が有効な場合）
+                ot = getattr(sc, "output_transcription", None)
+                if ot:
+                    text = getattr(ot, "text", "").strip()
+                    if text:
+                        safe_print(f"\r  {C.bold_purple('[AI]')} {text}",
+                                   end="", flush=True)
+                        _current_ai_response.append(text)
+
+                # ターン終了
+                if getattr(sc, "turn_complete", False):
+                    safe_print()
+                    user_text = " ".join(_current_user_transcript).strip()
+                    ai_text   = "".join(_current_ai_response).strip()
+                    if user_text and ai_text and len(executor.react_log.entries) > 0:
+                        executor.post_task(user_text, ai_text, [])
+                    _current_user_transcript.clear()
+                    _current_ai_response.clear()
 
         try:
-            await asyncio.gather(send_loop(), receive_loop(), playback_loop())
+            await asyncio.gather(send_loop(), receive_loop())
         finally:
             input_stream.stop()
             input_stream.close()
-            output_stream.stop()
-            output_stream.close()
+            audio_out_q.put(None)   # 再生スレッドを終了
+            pb_thread.join(timeout=2)
 
 
 # ─── エントリーポイント ───────────────────────────────────────────
