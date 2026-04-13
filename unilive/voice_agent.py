@@ -777,7 +777,9 @@ async def run_voice_mode(cfg: dict) -> None:
                     _turn = 0
                     while True:
                         _turn += 1
-                                                                                safe_print(C.gray(f"  [DBG] receive: 繧ｿ繝ｼ繝ｳ{_turn} 螳御ｺ・・谺｡縺ｮ繧ｿ繝ｼ繝ｳ縺ｸ"), flush=True)`r`n                            await asyncio.sleep(0)`r`n                            continue
+                                                                                                            safe_print(C.gray(f"  [DBG] receive: ターン{_turn} 完了→次のターンへ"), flush=True)
+                            await asyncio.sleep(0)
+                            continue
                         else:
                             safe_print(C.yellow(f"  [DBG] receive: ターン{_turn} ジェネレータ終了（turn_completeなし）→ 再接続"), flush=True)
                             break
