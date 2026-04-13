@@ -665,6 +665,18 @@ async def run_voice_mode(cfg: dict) -> None:
     genai_tools   = build_genai_tools()
     system_prompt = build_system_prompt(cfg["system_prompt"], cfg["cwd"], ltm)
 
+    # RealtimeInputConfig（VAD 明示有効化）- SDK バージョンによって存在しない場合は省略
+    _realtime_input_cfg = None
+    try:
+        _realtime_input_cfg = types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=False,
+            ),
+            activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+        )
+    except Exception:
+        pass  # 古い SDK バージョンでは無視
+
     live_config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
@@ -674,14 +686,17 @@ async def run_voice_mode(cfg: dict) -> None:
                 )
             )
         ),
+        **({"realtime_input_config": _realtime_input_cfg} if _realtime_input_cfg else {}),
         system_instruction=system_prompt,
         tools=genai_tools,
     )
 
+    import queue as _queue_mod
+    from websockets.exceptions import ConnectionClosedError as _WsClosedError
+
     safe_print(C.green(f"  モデル : {cfg['model']}"))
     safe_print(C.green(f"  声    : {cfg['voice_name']}"))
     safe_print(C.green(f"  作業フォルダ: {cfg['cwd']}"))
-    safe_print(C.gray("  接続中..."))
 
     loop = asyncio.get_event_loop()
     mic_queue: asyncio.Queue[bytes] = asyncio.Queue()
@@ -689,107 +704,145 @@ async def run_voice_mode(cfg: dict) -> None:
     def mic_callback(indata, frames, time_info, status):
         loop.call_soon_threadsafe(mic_queue.put_nowait, bytes(indata))
 
-    async with client.aio.live.connect(model=cfg["model"], config=live_config) as session:
-        executor.backup()
-        safe_print(C.bold_green("  接続完了！"))
-        safe_print(C.gray("  話しかけてください。Ctrl+C で終了\n"))
+    # 音声出力スレッド（asyncio と完全分離、セッション跨ぎで再利用）
+    audio_out_q: "_queue_mod.Queue[bytes | None]" = _queue_mod.Queue()
 
-        import queue as _queue_mod
-
-        # 音声出力を asyncio の外で行うスレッドセーフキュー
-        audio_out_q: "_queue_mod.Queue[bytes | None]" = _queue_mod.Queue()
-
-        # 教訓抽出用バッファ
-        _current_user_transcript: list[str] = []
-        _current_ai_response:     list[str] = []
-
-        # ── 音声再生スレッド（asyncio と完全分離）────────────────
-        def _playback_thread():
-            with sd.RawOutputStream(
-                samplerate=OUTPUT_RATE, channels=1, dtype="int16"
-            ) as out:
-                while True:
-                    chunk = audio_out_q.get()
-                    if chunk is None:   # 終了シグナル
-                        break
-                    try:
-                        out.write(chunk)
-                    except Exception:
-                        pass
-
-        pb_thread = threading.Thread(target=_playback_thread, daemon=True)
-        pb_thread.start()
-
-        # ── マイク入力ストリーム ──────────────────────────────────
-        input_stream = sd.RawInputStream(
-            samplerate=INPUT_RATE, channels=1, dtype="int16",
-            blocksize=CHUNK, callback=mic_callback,
-        )
-        input_stream.start()
-
-        # ── 送信ループ ────────────────────────────────────────────
-        async def send_loop():
+    def _playback_thread():
+        with sd.RawOutputStream(samplerate=OUTPUT_RATE, channels=1, dtype="int16") as out:
             while True:
-                pcm = await mic_queue.get()
-                await session.send_realtime_input(
-                    audio=types.Blob(data=pcm, mime_type="audio/pcm")
-                )
+                chunk = audio_out_q.get()
+                if chunk is None:
+                    break
+                try:
+                    out.write(chunk)
+                except Exception:
+                    pass
 
-        # ── 受信ループ（response.data / response.text を使わず
-        #                server_content を直接参照して警告を回避）──
-        async def receive_loop():
-            async for response in session.receive():
+    pb_thread = threading.Thread(target=_playback_thread, daemon=True)
+    pb_thread.start()
 
-                # ツール呼び出し
-                if response.tool_call:
-                    await handle_tool_calls(session, response.tool_call, executor)
-                    continue
+    # マイク入力ストリーム（セッション跨ぎで再利用）
+    input_stream = sd.RawInputStream(
+        samplerate=INPUT_RATE, channels=1, dtype="int16",
+        blocksize=CHUNK, callback=mic_callback,
+    )
+    input_stream.start()
 
-                sc = response.server_content
-                if not sc:
-                    continue
-
-                # 音声データ（inline_data から直接取り出す）
-                if sc.model_turn:
-                    for part in (sc.model_turn.parts or []):
-                        idata = getattr(part, "inline_data", None)
-                        if idata and getattr(idata, "data", None):
-                            audio_out_q.put(idata.data)
-
-                # ユーザー発話のテキスト
-                it = getattr(sc, "input_transcription", None)
-                if it:
-                    text = getattr(it, "text", "").strip()
-                    if text:
-                        _current_user_transcript.append(text)
-                        safe_print(C.gray(f"\r  [あなた] {text}"), flush=True)
-
-                # AI 出力のテキスト（OUTPUT_TRANSCRIPTION が有効な場合）
-                ot = getattr(sc, "output_transcription", None)
-                if ot:
-                    text = getattr(ot, "text", "").strip()
-                    if text:
-                        safe_print(f"\r  {C.bold_purple('[AI]')} {text}",
-                                   end="", flush=True)
-                        _current_ai_response.append(text)
-
-                # ターン終了
-                if getattr(sc, "turn_complete", False):
-                    safe_print()
-                    user_text = " ".join(_current_user_transcript).strip()
-                    ai_text   = "".join(_current_ai_response).strip()
-                    if user_text and ai_text and len(executor.react_log.entries) > 0:
-                        executor.post_task(user_text, ai_text, [])
-                    _current_user_transcript.clear()
-                    _current_ai_response.clear()
-
+    retry = 0
+    while True:
+        # ── 自動再接続ループ ─────────────────────────────────────
+        safe_print(C.gray("  接続中..." if retry == 0 else f"  再接続中... (試行 {retry})"))
         try:
-            await asyncio.gather(send_loop(), receive_loop())
-        finally:
-            input_stream.stop()
-            input_stream.close()
-            audio_out_q.put(None)   # 再生スレッドを終了
-            pb_thread.join(timeout=2)
+            async with client.aio.live.connect(
+                model=cfg["model"], config=live_config
+            ) as session:
+                if retry == 0:
+                    executor.backup()
+                retry = 0
+                safe_print(C.bold_green("  接続完了！"))
+                safe_print(C.gray("  話しかけてください。Ctrl+C で終了\n"))
+
+                # バッファ（セッションごとにリセット）
+                _cur_user: list[str] = []
+                _cur_ai:   list[str] = []
+
+                async def send_loop():
+                    while True:
+                        pcm = await mic_queue.get()
+                        try:
+                            await session.send_realtime_input(
+                                audio=types.Blob(data=pcm, mime_type="audio/pcm")
+                            )
+                        except Exception as _e:
+                            _es = str(_e).lower()
+                            if any(k in _es for k in (
+                                "closed", "eof", "disconnect",
+                                "1011", "1006", "keepalive",
+                            )):
+                                break  # 接続切断 → 再接続ループへ
+                            # 一時的なエラー（送信タイミング衝突など）は無視して継続
+                            await asyncio.sleep(0.01)
+
+                async def receive_loop():
+                    _ai_buf: list[str] = []
+                    async for response in session.receive():
+
+                        if response.tool_call:
+                            await handle_tool_calls(session, response.tool_call, executor)
+                            continue
+
+                        sc = response.server_content
+                        if not sc:
+                            continue
+
+                        # 音声データ
+                        if sc.model_turn:
+                            for part in (sc.model_turn.parts or []):
+                                idata = getattr(part, "inline_data", None)
+                                if idata and getattr(idata, "data", None):
+                                    audio_out_q.put(idata.data)
+
+                        # ユーザー発話テキスト
+                        it = getattr(sc, "input_transcription", None)
+                        if it:
+                            t = getattr(it, "text", "").strip()
+                            if t:
+                                _cur_user.append(t)
+
+                        # AI 出力テキスト（蓄積）
+                        ot = getattr(sc, "output_transcription", None)
+                        if ot:
+                            t = getattr(ot, "text", "")
+                            if t:
+                                _ai_buf.append(t)
+                                _cur_ai.append(t)
+
+                        # ターン終了 → まとめて表示
+                        if getattr(sc, "generation_complete", False):
+                            safe_print(C.gray("  [状態] generation_complete"), flush=True)
+
+                        if getattr(sc, "turn_complete", False):
+                            user_text = "".join(_cur_user).strip()
+                            ai_text   = "".join(_ai_buf).strip()
+                            if user_text:
+                                safe_print(C.gray(f"\n  [あなた] {user_text}"), flush=True)
+                            if ai_text:
+                                safe_print(f"  {C.bold_purple('[AI]')} {ai_text}", flush=True)
+                            if user_text and ai_text and len(executor.react_log.entries) > 0:
+                                executor.post_task(user_text, "".join(_cur_ai), [])
+                            _cur_user.clear()
+                            _cur_ai.clear()
+                            _ai_buf.clear()
+
+                await asyncio.gather(send_loop(), receive_loop())
+
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            break
+        except Exception as e:
+            err_str = str(e).lower()
+            _retryable = (
+                isinstance(e, _WsClosedError)
+                or any(k in err_str for k in (
+                    "keepalive", "ping timeout", "connection closed",
+                    "reset by peer", "broken pipe", "eof", "service unavailable",
+                    "1011", "1006",
+                ))
+            )
+            if not _retryable:
+                raise
+            retry += 1
+            if retry > 5:
+                safe_print(C.red("  再接続上限(5回)に達しました。終了します。"))
+                break
+            wait = min(2 ** retry, 30)
+            safe_print(C.yellow(f"  接続が切れました（{type(e).__name__}: {e}）。{wait}秒後に再接続します..."))
+            await asyncio.sleep(wait)
+            continue
+
+    input_stream.stop()
+    input_stream.close()
+    audio_out_q.put(None)
+    pb_thread.join(timeout=2)
 
 
 # ─── エントリーポイント ───────────────────────────────────────────
