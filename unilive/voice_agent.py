@@ -830,7 +830,7 @@ async def run_voice_mode(cfg: dict) -> None:
                         else:
                             safe_print(C.yellow(f"  [DBG] receive: ターン{_turn} ジェネレータ終了（turn_completeなし）→ 再接続"), flush=True)
                             break
-await asyncio.gather(send_loop(), receive_loop())
+                await asyncio.gather(send_loop(), receive_loop())
 
         except (KeyboardInterrupt, asyncio.CancelledError):
             break
