@@ -772,7 +772,7 @@ async def run_voice_mode(cfg: dict) -> None:
                             await asyncio.sleep(0.01)
                     safe_print(C.yellow("  [DBG] send_loop 終了"), flush=True)
 
-                                async def receive_loop():
+                                                async def receive_loop():
                     _ai_buf: list[str] = []
                     _turn = 0
                     while True:
