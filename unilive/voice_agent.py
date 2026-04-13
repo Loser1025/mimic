@@ -746,73 +746,99 @@ async def run_voice_mode(cfg: dict) -> None:
                 _cur_user: list[str] = []
                 _cur_ai:   list[str] = []
 
+                _send_count = [0]  # 送信チャンク数（デバッグ用）
+
                 async def send_loop():
+                    safe_print(C.gray("  [DBG] send_loop 開始"), flush=True)
                     while True:
                         pcm = await mic_queue.get()
+                        _send_count[0] += 1
+                        if _send_count[0] % 50 == 1:  # 50チャンクごとに表示
+                            safe_print(C.gray(f"  [DBG] 送信中 chunk#{_send_count[0]}"), flush=True)
                         try:
                             await session.send_realtime_input(
                                 audio=types.Blob(data=pcm, mime_type="audio/pcm")
                             )
                         except Exception as _e:
                             _es = str(_e).lower()
+                            safe_print(C.yellow(f"  [DBG] send エラー: {type(_e).__name__}: {_e}"), flush=True)
                             if any(k in _es for k in (
                                 "closed", "eof", "disconnect",
                                 "1011", "1006", "keepalive",
                             )):
-                                break  # 接続切断 → 再接続ループへ
-                            # 一時的なエラー（送信タイミング衝突など）は無視して継続
+                                safe_print(C.yellow("  [DBG] send_loop 終了（接続切断）"), flush=True)
+                                break
                             await asyncio.sleep(0.01)
+                    safe_print(C.yellow("  [DBG] send_loop 終了"), flush=True)
 
                 async def receive_loop():
+                    safe_print(C.gray("  [DBG] receive_loop 開始"), flush=True)
+                    _recv_count = 0
                     _ai_buf: list[str] = []
-                    async for response in session.receive():
+                    try:
+                        async for response in session.receive():
+                            _recv_count += 1
+                            safe_print(C.gray(f"  [DBG] recv#{_recv_count}: tool_call={bool(response.tool_call)} sc={bool(response.server_content)} text={bool(response.text)}"), flush=True)
 
-                        if response.tool_call:
-                            await handle_tool_calls(session, response.tool_call, executor)
-                            continue
+                            if response.tool_call:
+                                await handle_tool_calls(session, response.tool_call, executor)
+                                continue
 
-                        sc = response.server_content
-                        if not sc:
-                            continue
+                            sc = response.server_content
+                            if not sc:
+                                continue
 
-                        # 音声データ
-                        if sc.model_turn:
-                            for part in (sc.model_turn.parts or []):
-                                idata = getattr(part, "inline_data", None)
-                                if idata and getattr(idata, "data", None):
-                                    audio_out_q.put(idata.data)
+                            safe_print(C.gray(f"  [DBG] sc fields: model_turn={bool(sc.model_turn)} turn_complete={getattr(sc,'turn_complete',False)} gen_complete={getattr(sc,'generation_complete',False)} input_tr={bool(getattr(sc,'input_transcription',None))} output_tr={bool(getattr(sc,'output_transcription',None))}"), flush=True)
 
-                        # ユーザー発話テキスト
-                        it = getattr(sc, "input_transcription", None)
-                        if it:
-                            t = getattr(it, "text", "").strip()
-                            if t:
-                                _cur_user.append(t)
+                            # 音声データ
+                            if sc.model_turn:
+                                audio_chunks = 0
+                                for part in (sc.model_turn.parts or []):
+                                    idata = getattr(part, "inline_data", None)
+                                    if idata and getattr(idata, "data", None):
+                                        audio_out_q.put(idata.data)
+                                        audio_chunks += 1
+                                if audio_chunks:
+                                    safe_print(C.gray(f"  [DBG] 音声チャンク {audio_chunks} 個をキューに追加"), flush=True)
 
-                        # AI 出力テキスト（蓄積）
-                        ot = getattr(sc, "output_transcription", None)
-                        if ot:
-                            t = getattr(ot, "text", "")
-                            if t:
-                                _ai_buf.append(t)
-                                _cur_ai.append(t)
+                            # ユーザー発話テキスト
+                            it = getattr(sc, "input_transcription", None)
+                            if it:
+                                t = getattr(it, "text", "").strip()
+                                if t:
+                                    _cur_user.append(t)
+                                    safe_print(C.gray(f"  [DBG] user transcript: {t!r}"), flush=True)
 
-                        # ターン終了 → まとめて表示
-                        if getattr(sc, "generation_complete", False):
-                            safe_print(C.gray("  [状態] generation_complete"), flush=True)
+                            # AI 出力テキスト（蓄積）
+                            ot = getattr(sc, "output_transcription", None)
+                            if ot:
+                                t = getattr(ot, "text", "")
+                                if t:
+                                    _ai_buf.append(t)
+                                    _cur_ai.append(t)
+                                    safe_print(C.gray(f"  [DBG] ai transcript: {t!r}"), flush=True)
 
-                        if getattr(sc, "turn_complete", False):
-                            user_text = "".join(_cur_user).strip()
-                            ai_text   = "".join(_ai_buf).strip()
-                            if user_text:
-                                safe_print(C.gray(f"\n  [あなた] {user_text}"), flush=True)
-                            if ai_text:
-                                safe_print(f"  {C.bold_purple('[AI]')} {ai_text}", flush=True)
-                            if user_text and ai_text and len(executor.react_log.entries) > 0:
-                                executor.post_task(user_text, "".join(_cur_ai), [])
-                            _cur_user.clear()
-                            _cur_ai.clear()
-                            _ai_buf.clear()
+                            # ターン終了 → まとめて表示
+                            if getattr(sc, "generation_complete", False):
+                                safe_print(C.gray("  [状態] generation_complete"), flush=True)
+
+                            if getattr(sc, "turn_complete", False):
+                                safe_print(C.gray("  [状態] turn_complete"), flush=True)
+                                user_text = "".join(_cur_user).strip()
+                                ai_text   = "".join(_ai_buf).strip()
+                                if user_text:
+                                    safe_print(C.gray(f"\n  [あなた] {user_text}"), flush=True)
+                                if ai_text:
+                                    safe_print(f"  {C.bold_purple('[AI]')} {ai_text}", flush=True)
+                                if user_text and ai_text and len(executor.react_log.entries) > 0:
+                                    executor.post_task(user_text, "".join(_cur_ai), [])
+                                _cur_user.clear()
+                                _cur_ai.clear()
+                                _ai_buf.clear()
+                    except Exception as _re:
+                        safe_print(C.red(f"  [DBG] receive_loop 例外: {type(_re).__name__}: {_re}"), flush=True)
+                        raise
+                    safe_print(C.yellow("  [DBG] receive_loop 終了（ジェネレータ枯渇）"), flush=True)
 
                 await asyncio.gather(send_loop(), receive_loop())
 
