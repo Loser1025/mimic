@@ -544,9 +544,7 @@ async def handle_tool_calls(session, tool_call, executor: V4ToolExecutor) -> Non
         function_responses.append(types.FunctionResponse(
             name=fn_name, id=fc.id, response={"output": result}
         ))
-    await session.send(
-        input=types.LiveClientToolResponse(function_responses=function_responses)
-    )
+    await session.send_tool_response(function_responses=function_responses)
 
 
 # ─── テキストモード ───────────────────────────────────────────────
@@ -615,7 +613,13 @@ async def run_text_mode(cfg: dict) -> None:
             ctx_header = f"[作業フォルダ] {executor.cwd}"
             message    = f"{ctx_header}\n\n{augmented}"
 
-            await session.send(input=message, end_of_turn=True)
+            await session.send_client_content(
+                turns=types.Content(
+                    role="user",
+                    parts=[types.Part(text=message)]
+                ),
+                turn_complete=True,
+            )
 
             safe_print(C.bold_purple("AI > "), end="", flush=True)
             full_response = []
@@ -707,7 +711,9 @@ async def run_voice_mode(cfg: dict) -> None:
         async def send_loop():
             while True:
                 pcm = await mic_queue.get()
-                await session.send(input=types.Blob(data=pcm, mime_type="audio/pcm"))
+                await session.send_realtime_input(
+                    audio=types.Blob(data=pcm, mime_type="audio/pcm")
+                )
 
         async def receive_loop():
             async for response in session.receive():
