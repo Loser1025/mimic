@@ -704,7 +704,10 @@ async def run_voice_mode(cfg: dict) -> None:
         input_stream.start()
         output_stream.start()
 
-        # 音声モードでの教訓抽出用：ユーザー発話とAI応答を蓄積
+        # 音声出力用キュー（receive_loop をブロックしないよう分離）
+        audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+        # 教訓抽出用バッファ
         _current_user_transcript: list[str] = []
         _current_ai_response:     list[str] = []
 
@@ -715,6 +718,28 @@ async def run_voice_mode(cfg: dict) -> None:
                     audio=types.Blob(data=pcm, mime_type="audio/pcm")
                 )
 
+        async def playback_loop():
+            """audio_queue から音声を取り出してスピーカーに書き込む（非ブロッキング）"""
+            while True:
+                chunk = await audio_queue.get()
+                await asyncio.to_thread(output_stream.write, chunk)
+
+        def _extract_audio(response) -> bytes | None:
+            """
+            SDK バージョン差異を吸収して音声バイトを取り出す。
+            response.data → server_content の inline_data の順に試みる。
+            """
+            # 新しい SDK: response.data に直接入っている
+            if response.data:
+                return response.data
+            # inline_data 形式（警告が出るケース）
+            sc = response.server_content
+            if sc and sc.model_turn:
+                for part in sc.model_turn.parts or []:
+                    if hasattr(part, "inline_data") and part.inline_data:
+                        return part.inline_data.data
+            return None
+
         async def receive_loop():
             async for response in session.receive():
 
@@ -722,9 +747,10 @@ async def run_voice_mode(cfg: dict) -> None:
                 if response.tool_call:
                     await handle_tool_calls(session, response.tool_call, executor)
 
-                # 音声 → スピーカー
-                if response.data:
-                    output_stream.write(response.data)
+                # 音声 → キューに積む（ブロッキング write はしない）
+                audio = _extract_audio(response)
+                if audio:
+                    await audio_queue.put(audio)
 
                 # テキスト字幕
                 if response.text:
@@ -732,17 +758,19 @@ async def run_voice_mode(cfg: dict) -> None:
                                end="", flush=True)
                     _current_ai_response.append(response.text)
 
-                # ユーザーの音声テキスト（input_transcription）
+                # server_content から transcription / ターン終了を取得
                 sc = response.server_content
                 if sc:
-                    if sc.input_transcription:
-                        text = sc.input_transcription.text if hasattr(sc.input_transcription, "text") else str(sc.input_transcription)
-                        if text.strip():
+                    # ユーザーの音声テキスト
+                    it = getattr(sc, "input_transcription", None)
+                    if it:
+                        text = getattr(it, "text", str(it)).strip()
+                        if text:
                             _current_user_transcript.append(text)
                             safe_print(C.gray(f"\r  [あなた] {text}"), flush=True)
 
                     # ターン終了 → 教訓抽出
-                    if sc.turn_complete:
+                    if getattr(sc, "turn_complete", False):
                         safe_print()
                         user_text = " ".join(_current_user_transcript).strip()
                         ai_text   = "".join(_current_ai_response).strip()
@@ -752,7 +780,7 @@ async def run_voice_mode(cfg: dict) -> None:
                         _current_ai_response.clear()
 
         try:
-            await asyncio.gather(send_loop(), receive_loop())
+            await asyncio.gather(send_loop(), receive_loop(), playback_loop())
         finally:
             input_stream.stop()
             input_stream.close()
