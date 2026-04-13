@@ -674,8 +674,9 @@ async def run_voice_mode(cfg: dict) -> None:
             ),
             activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
         )
-    except Exception:
-        pass  # 古い SDK バージョンでは無視
+        safe_print(C.gray("  [DBG] RealtimeInputConfig OK"), flush=True)
+    except Exception as _cfg_e:
+        safe_print(C.yellow(f"  [DBG] RealtimeInputConfig 非対応、省略: {_cfg_e}"), flush=True)
 
     live_config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
@@ -778,7 +779,8 @@ async def run_voice_mode(cfg: dict) -> None:
                     try:
                         async for response in session.receive():
                             _recv_count += 1
-                            safe_print(C.gray(f"  [DBG] recv#{_recv_count}: tool_call={bool(response.tool_call)} sc={bool(response.server_content)} text={bool(response.text)}"), flush=True)
+                            _r_repr = repr(response)[:300].replace('\n', ' ')
+                            safe_print(C.gray(f"  [DBG] recv#{_recv_count}: {_r_repr}"), flush=True)
 
                             if response.tool_call:
                                 await handle_tool_calls(session, response.tool_call, executor)
