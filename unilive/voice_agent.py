@@ -773,14 +773,10 @@ async def run_voice_mode(cfg: dict) -> None:
                     safe_print(C.yellow("  [DBG] send_loop 終了"), flush=True)
 
                 async def receive_loop():
-                    safe_print(C.gray("  [DBG] receive_loop 開始"), flush=True)
-                    _recv_count = 0
                     _ai_buf: list[str] = []
-                    try:
+                    while True:
+                        # turn_complete でジェネレータが終了するため、ターンごとに再起動する
                         async for response in session.receive():
-                            _recv_count += 1
-                            _r_repr = repr(response)[:300].replace('\n', ' ')
-                            safe_print(C.gray(f"  [DBG] recv#{_recv_count}: {_r_repr}"), flush=True)
 
                             if response.tool_call:
                                 await handle_tool_calls(session, response.tool_call, executor)
@@ -790,18 +786,12 @@ async def run_voice_mode(cfg: dict) -> None:
                             if not sc:
                                 continue
 
-                            safe_print(C.gray(f"  [DBG] sc fields: model_turn={bool(sc.model_turn)} turn_complete={getattr(sc,'turn_complete',False)} gen_complete={getattr(sc,'generation_complete',False)} input_tr={bool(getattr(sc,'input_transcription',None))} output_tr={bool(getattr(sc,'output_transcription',None))}"), flush=True)
-
                             # 音声データ
                             if sc.model_turn:
-                                audio_chunks = 0
                                 for part in (sc.model_turn.parts or []):
                                     idata = getattr(part, "inline_data", None)
                                     if idata and getattr(idata, "data", None):
                                         audio_out_q.put(idata.data)
-                                        audio_chunks += 1
-                                if audio_chunks:
-                                    safe_print(C.gray(f"  [DBG] 音声チャンク {audio_chunks} 個をキューに追加"), flush=True)
 
                             # ユーザー発話テキスト
                             it = getattr(sc, "input_transcription", None)
@@ -809,7 +799,6 @@ async def run_voice_mode(cfg: dict) -> None:
                                 t = getattr(it, "text", "").strip()
                                 if t:
                                     _cur_user.append(t)
-                                    safe_print(C.gray(f"  [DBG] user transcript: {t!r}"), flush=True)
 
                             # AI 出力テキスト（蓄積）
                             ot = getattr(sc, "output_transcription", None)
@@ -818,14 +807,9 @@ async def run_voice_mode(cfg: dict) -> None:
                                 if t:
                                     _ai_buf.append(t)
                                     _cur_ai.append(t)
-                                    safe_print(C.gray(f"  [DBG] ai transcript: {t!r}"), flush=True)
 
-                            # ターン終了 → まとめて表示
-                            if getattr(sc, "generation_complete", False):
-                                safe_print(C.gray("  [状態] generation_complete"), flush=True)
-
+                            # ターン終了 → まとめて表示 + バッファリセット
                             if getattr(sc, "turn_complete", False):
-                                safe_print(C.gray("  [状態] turn_complete"), flush=True)
                                 user_text = "".join(_cur_user).strip()
                                 ai_text   = "".join(_ai_buf).strip()
                                 if user_text:
@@ -837,10 +821,11 @@ async def run_voice_mode(cfg: dict) -> None:
                                 _cur_user.clear()
                                 _cur_ai.clear()
                                 _ai_buf.clear()
-                    except Exception as _re:
-                        safe_print(C.red(f"  [DBG] receive_loop 例外: {type(_re).__name__}: {_re}"), flush=True)
-                        raise
-                    safe_print(C.yellow("  [DBG] receive_loop 終了（ジェネレータ枯渇）"), flush=True)
+                                break  # このターンの receive() を抜けて while で再起動
+                        else:
+                            # ジェネレータが turn_complete なしに終了 = セッション切断
+                            break
+                        await asyncio.sleep(0)
 
                 await asyncio.gather(send_loop(), receive_loop())
 
