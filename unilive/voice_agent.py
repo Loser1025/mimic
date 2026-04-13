@@ -774,9 +774,13 @@ async def run_voice_mode(cfg: dict) -> None:
 
                 async def receive_loop():
                     _ai_buf: list[str] = []
+                    _turn = 0
                     while True:
-                        # turn_complete でジェネレータが終了するため、ターンごとに再起動する
+                        _turn += 1
+                        safe_print(C.gray(f"  [DBG] receive: ターン{_turn} 待機開始"), flush=True)
+                        _got_turn_complete = False
                         async for response in session.receive():
+                            safe_print(C.gray(f"  [DBG] recv t{_turn}: sc={bool(response.server_content)} tool={bool(response.tool_call)} repr={repr(response)[:120].replace(chr(10),' ')}"), flush=True)
 
                             if response.tool_call:
                                 await handle_tool_calls(session, response.tool_call, executor)
@@ -810,6 +814,7 @@ async def run_voice_mode(cfg: dict) -> None:
 
                             # ターン終了 → まとめて表示 + バッファリセット
                             if getattr(sc, "turn_complete", False):
+                                _got_turn_complete = True
                                 user_text = "".join(_cur_user).strip()
                                 ai_text   = "".join(_ai_buf).strip()
                                 if user_text:
@@ -822,10 +827,14 @@ async def run_voice_mode(cfg: dict) -> None:
                                 _cur_ai.clear()
                                 _ai_buf.clear()
                                 break  # このターンの receive() を抜けて while で再起動
+
+                        if _got_turn_complete:
+                            safe_print(C.gray(f"  [DBG] receive: ターン{_turn} 完了 → 次のターンへ"), flush=True)
+                            await asyncio.sleep(0)
+                            continue
                         else:
-                            # ジェネレータが turn_complete なしに終了 = セッション切断
+                            safe_print(C.yellow(f"  [DBG] receive: ターン{_turn} ジェネレータ終了（turn_completeなし）→ 再接続"), flush=True)
                             break
-                        await asyncio.sleep(0)
 
                 await asyncio.gather(send_loop(), receive_loop())
 
