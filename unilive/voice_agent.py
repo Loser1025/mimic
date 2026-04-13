@@ -777,7 +777,7 @@ async def run_voice_mode(cfg: dict) -> None:
                     _turn = 0
                     while True:
                         _turn += 1
-                                                    safe_print(C.gray(f"  [DBG] receive: 繧ｿ繝ｼ繝ｳ{_turn} 螳御ｺ・・繧ｻ繝・す繝ｧ繝ｳ繧偵Μ繧ｻ繝・ヨ縺励※蜀肴磁邯・), flush=True)`n                            raise RuntimeError("session reset after turn_complete to ensure responsiveness")
+                                                                                safe_print(C.gray(f"  [DBG] receive: 繧ｿ繝ｼ繝ｳ{_turn} 螳御ｺ・・谺｡縺ｮ繧ｿ繝ｼ繝ｳ縺ｸ"), flush=True)`r`n                            await asyncio.sleep(0)`r`n                            continue
                         else:
                             safe_print(C.yellow(f"  [DBG] receive: ターン{_turn} ジェネレータ終了（turn_completeなし）→ 再接続"), flush=True)
                             break
