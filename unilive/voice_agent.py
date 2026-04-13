@@ -116,7 +116,7 @@ def _gemini_generate(api_key: str, prompt: str) -> str:
     from google import genai
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemma-4-31b-it",
         contents=prompt,
     )
     return response.text or ""
