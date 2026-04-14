@@ -742,6 +742,19 @@ async def run_voice_mode(cfg: dict) -> None:
                 safe_print(C.bold_green("  接続完了！"))
                 safe_print(C.gray("  話しかけてください。Ctrl+C で終了\n"))
 
+                # 起動時の挨拶を送信（AIがユーザーに話しかける）
+                await session.send_client_content(
+                    turns=types.Content(
+                        role="user",
+                        parts=[types.Part(text=(
+                            "あなたが起動しました。"
+                            "ユーザーに日本語で一言、起動したことを短く挨拶してください。"
+                            "（例：「起動しました。何でもどうぞ。」程度の簡潔さで）"
+                        ))]
+                    ),
+                    turn_complete=True,
+                )
+
                 # バッファ（セッションごとにリセット）
                 _cur_user: list[str] = []
                 _cur_ai:   list[str] = []
