@@ -298,8 +298,8 @@ class TtsPipeline:
 #  SentenceBuffer — ストリームを文単位に分割して TTS へ渡す
 # ════════════════════════════════════════════════════════════════
 
-# 日本語文区切り（読点含む長い文も対象）
-_SENT_RE = re.compile(r'[^。！？!?\n]{2,}[。！？!?\n]')
+# 日本語文区切り、および英語の文末（.）を対象にする（思考プロセス分離のため）
+_SENT_RE = re.compile(r'[^。！？!?\n\.]{2,}[。！？!?\n\.]')
 
 class SentenceBuffer:
     """
@@ -463,16 +463,23 @@ class VoicevoxAgent:
             f"{self.cfg['system_prompt']}\n\n"
             f"## 作業フォルダ\n  {self.cwd}\n\n"
             "## 作業ルール\n"
-            "- 音声応答なので簡潔に話してください\n"
-            "- ツール実行前に何をするか一言説明してください\n"
+            "- ユーザーの指示に日本語で応答してください\n"
+            "- 思考プロセスや作業計画は英語で行っても構いませんが、読み上げ対象から除外するため日本語の回答とは改行で区切ってください\n"
+            "- 音声応答なので日本語部分はできるだけ簡潔に話してください\n"
+            "- ツール実行前に何をするか日本語で一言説明してください\n"
             "- 複数の独立した読み取りは並列で行ってください\n"
-            "- 依頼されていない改善を自発的に行わないでください\n"
         )
 
     # ── TTS ──────────────────────────────────────────────────────
 
     def _speak(self, text: str):
-        """TtsPipeline に文を追加（合成→再生は順序保証）"""
+        """
+        TtsPipeline に文を追加（合成→再生は順序保証）
+        日本語が含まれていない場合は、思考プロセスや英語のみの文と判断して読み上げをスキップします。
+        """
+        if not re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text):
+            # 日本語が含まれない文（思考プロセスなど）はスキップ
+            return
         self.tts.push(text)
 
     # ── 1ターン処理 ────────────────────────────────────────────────
@@ -511,6 +518,11 @@ class VoicevoxAgent:
                         continue
 
                     for part in cand.content.parts:
+                        # 思考プロセス（一部のモデルで提供される thought 属性）をスキップ
+                        if hasattr(part, "thought") and part.thought:
+                            safe_print(C.gray(f"\n[思考中...]\n{part.thought}\n"), flush=True)
+                            continue
+
                         if hasattr(part, "text") and part.text:
                             safe_print(part.text, end="", flush=True)
                             text_parts.append(part.text)
