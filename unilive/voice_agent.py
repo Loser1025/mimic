@@ -766,17 +766,13 @@ async def run_voice_mode(cfg: dict) -> None:
                     _ai_buf: list[str] = []
                     _turn = 0
 
-                    # 起動時の挨拶（receive_loop 内から送信することでセッションが安定）
-                    await session.send_client_content(
-                        turns=types.Content(
-                            role="user",
-                            parts=[types.Part(text=(
-                                "あなたが起動しました。"
-                                "ユーザーに日本語で一言、起動したことを短く挨拶してください。"
-                                "（例：「起動しました。何でもどうぞ。」程度の簡潔さで）"
-                            ))]
-                        ),
-                        turn_complete=True,
+                    # 起動時の挨拶（AUDIO モードは send_realtime_input(text=) を使用）
+                    await session.send_realtime_input(
+                        text=(
+                            "あなたが起動しました。"
+                            "ユーザーに日本語で一言、起動したことを短く挨拶してください。"
+                            "（例：「起動しました。何でもどうぞ。」程度の簡潔さで）"
+                        )
                     )
 
                     while True:
