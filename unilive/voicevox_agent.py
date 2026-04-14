@@ -489,7 +489,7 @@ class VoicevoxAgent:
         full_response_parts: list[str] = []
 
         while True:
-            sent_buf = SentenceBuffer(on_sentence=self._speak)
+            sent_buf = SentenceBuffer(self._speak)
             text_parts: list[str] = []
             tool_calls: list      = []
 
