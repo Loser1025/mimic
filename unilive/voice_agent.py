@@ -674,9 +674,8 @@ async def run_voice_mode(cfg: dict) -> None:
             ),
             activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
         )
-        safe_print(C.gray("  [DBG] RealtimeInputConfig OK"), flush=True)
     except Exception as _cfg_e:
-        safe_print(C.yellow(f"  [DBG] RealtimeInputConfig 非対応、省略: {_cfg_e}"), flush=True)
+        pass
 
     live_config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
@@ -747,41 +746,29 @@ async def run_voice_mode(cfg: dict) -> None:
                 _cur_user: list[str] = []
                 _cur_ai:   list[str] = []
 
-                _send_count = [0]  # 送信チャンク数（デバッグ用）
-
                 async def send_loop():
-                    safe_print(C.gray("  [DBG] send_loop 開始"), flush=True)
                     while True:
                         pcm = await mic_queue.get()
-                        _send_count[0] += 1
-                        if _send_count[0] % 50 == 1:  # 50チャンクごとに表示
-                            safe_print(C.gray(f"  [DBG] 送信中 chunk#{_send_count[0]}"), flush=True)
                         try:
                             await session.send_realtime_input(
                                 audio=types.Blob(data=pcm, mime_type="audio/pcm")
                             )
                         except Exception as _e:
                             _es = str(_e).lower()
-                            safe_print(C.yellow(f"  [DBG] send エラー: {type(_e).__name__}: {_e}"), flush=True)
                             if any(k in _es for k in (
                                 "closed", "eof", "disconnect",
                                 "1011", "1006", "keepalive",
                             )):
-                                safe_print(C.yellow("  [DBG] send_loop 終了（接続切断）"), flush=True)
                                 break
                             await asyncio.sleep(0.01)
-                    safe_print(C.yellow("  [DBG] send_loop 終了"), flush=True)
 
                 async def receive_loop():
                     _ai_buf: list[str] = []
                     _turn = 0
                     while True:
                         _turn += 1
-                        safe_print(C.gray(f"  [DBG] receive: ターン{_turn} 待機開始"), flush=True)
                         _got_turn_complete = False
                         async for response in session.receive():
-                            safe_print(C.gray(f"  [DBG] recv t{_turn}: sc={bool(response.server_content)} tool={bool(response.tool_call)} repr={repr(response)[:120].replace(chr(10),' ')}"), flush=True)
-
                             if response.tool_call:
                                 await handle_tool_calls(session, response.tool_call, executor)
                                 continue
@@ -824,11 +811,9 @@ async def run_voice_mode(cfg: dict) -> None:
                                 _ai_buf.clear()
                                 break
                         if _got_turn_complete:
-                            safe_print(C.gray(f"  [DBG] receive: ターン{_turn} 完了→次のターンへ"), flush=True)
                             await asyncio.sleep(0)
                             continue
                         else:
-                            safe_print(C.yellow(f"  [DBG] receive: ターン{_turn} ジェネレータ終了（turn_completeなし）→ 再接続"), flush=True)
                             break
                 await asyncio.gather(send_loop(), receive_loop())
 
