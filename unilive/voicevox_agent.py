@@ -288,10 +288,11 @@ class TtsPipeline:
                                    dtype={1: np.int8, 2: np.int16, 4: np.int32}[swidth])
         if nch > 1:
             data = data.reshape(-1, nch)
-        # sd.play()+sd.wait() はスレッド内で不安定なため OutputStream で直接書き込む
-        channels = data.shape[1] if data.ndim > 1 else 1
-        with sd.OutputStream(samplerate=rate, channels=channels, dtype=data.dtype) as stream:
-            stream.write(data)
+        
+        # sd.play() を使い、sd.wait() で再生完了まで確実に待機
+        # これにより音声が途中で途切れるのを防ぎます
+        sd.play(data, rate)
+        sd.wait()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -299,7 +300,8 @@ class TtsPipeline:
 # ════════════════════════════════════════════════════════════════
 
 # 日本語文区切り、および英語の文末（.）を対象にする（思考プロセス分離のため）
-_SENT_RE = re.compile(r'[^。！？!?\n\.]{2,}[。！？!?\n\.]')
+# 短い応答（「はい。」など）にも反応できるよう 1文字以上にする
+_SENT_RE = re.compile(r'[^。！？!?\n\.]{1,}[。！？!?\n\.]')
 
 class SentenceBuffer:
     """
@@ -448,9 +450,8 @@ class VoicevoxAgent:
         self.tools_spec = build_tools_spec()
 
         # V4 コンポーネント
-        ltm = _v4.LongTermMemory(str(_HERE / "lessons_db.json"))
         from voice_agent import V4ToolExecutor
-        self.executor = V4ToolExecutor(self.cwd, cfg["accounts"][0].api_key, ltm)
+        self.executor = V4ToolExecutor(self.cwd, cfg["accounts"][0].api_key, None)
 
         # 会話履歴
         self.history: list = []
@@ -617,9 +618,7 @@ class VoicevoxAgent:
                 break
 
             try:
-                final = self._run_turn(text)
-                if final:
-                    self.executor.post_task(text, final, [])
+                self._run_turn(text)
             except KeyboardInterrupt:
                 break
             except Exception as e:
@@ -660,9 +659,7 @@ class VoicevoxAgent:
                 continue
 
             try:
-                final = self._run_turn(raw)
-                if final:
-                    self.executor.post_task(raw, final, [])
+                self._run_turn(raw)
             except Exception as e:
                 safe_print(C.red(f"\n  [エラー] {e}"), flush=True)
 
