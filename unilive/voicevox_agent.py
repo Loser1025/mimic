@@ -288,8 +288,10 @@ class TtsPipeline:
                                    dtype={1: np.int8, 2: np.int16, 4: np.int32}[swidth])
         if nch > 1:
             data = data.reshape(-1, nch)
-        sd.play(data, samplerate=rate)
-        sd.wait()
+        # sd.play()+sd.wait() はスレッド内で不安定なため OutputStream で直接書き込む
+        channels = data.shape[1] if data.ndim > 1 else 1
+        with sd.OutputStream(samplerate=rate, channels=channels, dtype=data.dtype) as stream:
+            stream.write(data)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -576,6 +578,7 @@ class VoicevoxAgent:
         safe_print(C.gray("  「終了」と言うか Ctrl+C で終了\n"), flush=True)
 
         self._speak("起動しました。何でもどうぞ。")
+        self.tts.wait_done()  # 挨拶を最後まで再生してから次へ
         self.executor.backup()
 
         while True:
@@ -622,6 +625,7 @@ class VoicevoxAgent:
         safe_print(C.gray("  /log, /undo, exit で操作\n"), flush=True)
 
         self._speak("起動しました。何でもどうぞ。")
+        self.tts.wait_done()  # 挨拶を最後まで再生してから次へ
         self.executor.backup()
 
         while True:
