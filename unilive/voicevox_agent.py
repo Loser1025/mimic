@@ -451,13 +451,14 @@ class VoicevoxAgent:
       再生キューに追加（合成と再生を並走させる）。
     """
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, on_state_change=None):
         self.cfg     = cfg
         self.rotator: "_v4.AccountRotator" = cfg["rotator"]
         self.cwd     = cfg["cwd"]
         self.vvx     = VoicevoxClient(cfg["voicevox_url"], cfg["speaker_id"])
         self.tts     = TtsPipeline(self.vvx)
         self.tools_spec = build_tools_spec()
+        self.on_state_change = on_state_change
 
         # V4 コンポーネント
         from voice_agent import V4ToolExecutor
@@ -465,6 +466,11 @@ class VoicevoxAgent:
 
         # 会話履歴
         self.history: list = []
+
+    def _set_state(self, state: str):
+        """GUI 状態を更新 (idle, listening, processing, speaking)"""
+        if self.on_state_change:
+            self.on_state_change(state)
 
     # ── システムプロンプト ─────────────────────────────────────────
 
@@ -491,6 +497,7 @@ class VoicevoxAgent:
         if not re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text):
             # 日本語が含まれない文（思考プロセスなど）はスキップ
             return
+        self._set_state("speaking")
         self.tts.push(text)
 
     # ── 1ターン処理 ────────────────────────────────────────────────
@@ -512,6 +519,7 @@ class VoicevoxAgent:
         full_response_parts: list[str] = []
 
         while True:
+            self._set_state("processing")
             sent_buf = SentenceBuffer(self._speak)
             text_parts: list[str] = []
             tool_calls: list      = []
@@ -585,6 +593,7 @@ class VoicevoxAgent:
 
         # 再生完了を待つ
         self.tts.wait_done()
+        self._set_state("idle")
         return "\n".join(full_response_parts)
 
     # ── 音声モード ────────────────────────────────────────────────
@@ -606,12 +615,15 @@ class VoicevoxAgent:
 
         while True:
             try:
+                self._set_state("listening")
                 audio = recorder.record()
             except KeyboardInterrupt:
                 break
             if audio is None:
+                self._set_state("idle")
                 continue
 
+            self._set_state("processing")
             safe_print(C.gray("  文字起こし中..."), flush=True)
             t0 = time.time()
             text = stt.transcribe(audio)
@@ -620,6 +632,7 @@ class VoicevoxAgent:
 
             if not text.strip():
                 safe_print(C.gray("  （聞き取れませんでした）"), flush=True)
+                self._set_state("idle")
                 continue
 
             if any(w in text for w in ["終了", "終わり", "バイバイ", "さようなら"]):
@@ -633,6 +646,7 @@ class VoicevoxAgent:
                 break
             except Exception as e:
                 safe_print(C.red(f"\n  [エラー] {e}"), flush=True)
+                self._set_state("idle")
 
         safe_print(C.gray("  終了しました。"), flush=True)
 
