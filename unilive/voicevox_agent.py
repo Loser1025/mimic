@@ -144,7 +144,6 @@ def _gemini_stream(rotator: "_v4.AccountRotator", contents: list,
             system_instruction=system_instruction,
             tools=tools_spec,
             temperature=0.7,
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
 
         try:
