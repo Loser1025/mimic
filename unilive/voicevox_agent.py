@@ -289,10 +289,20 @@ class TtsPipeline:
         if nch > 1:
             data = data.reshape(-1, nch)
         
+        # 0.2秒程度の無音を末尾に追加して、デバイスによる末尾のカットを防止
+        silence_len = int(rate * 0.2)
+        if nch > 1:
+            silence = np.zeros((silence_len, nch), dtype=data.dtype)
+        else:
+            silence = np.zeros(silence_len, dtype=data.dtype)
+        data = np.concatenate([data, silence])
+
         # sd.play() を使い、sd.wait() で再生完了まで確実に待機
-        # これにより音声が途中で途切れるのを防ぎます
         sd.play(data, rate)
         sd.wait()
+        
+        # 再生終了後にごくわずかな猶予を持たせる
+        time.sleep(0.1)
 
 
 # ════════════════════════════════════════════════════════════════
