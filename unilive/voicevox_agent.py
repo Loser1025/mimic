@@ -66,7 +66,7 @@ _tools     = _v4.tools
 _SKIP      = {"ask_user"}
 
 # ── ターゲットモデル ──────────────────────────────────────────────
-TARGET_MODEL   = "gemini-3.1-flash-preview"
+TARGET_MODEL   = "gemini-3.1-flash-lite-preview"
 BASE_BACKOFF   = 5.0
 MAX_RETRIES    = 12
 
