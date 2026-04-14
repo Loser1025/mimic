@@ -66,7 +66,7 @@ _tools     = _v4.tools
 _SKIP      = {"ask_user"}
 
 # ── ターゲットモデル ──────────────────────────────────────────────
-TARGET_MODEL   = "gemma-4-31b-it"
+TARGET_MODEL   = "gemma-4-26b-a4b-it"
 BASE_BACKOFF   = 5.0
 MAX_RETRIES    = 12
 
@@ -144,6 +144,7 @@ def _gemini_stream(rotator: "_v4.AccountRotator", contents: list,
             system_instruction=system_instruction,
             tools=tools_spec,
             temperature=0.7,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
 
         try:
@@ -227,44 +228,59 @@ class VoicevoxClient:
         r2.raise_for_status()
         return r2.content
 
-    def synthesize_to_queue(self, text: str, out: queue.Queue):
-        """バックグラウンドで合成して out に (ok, wav_or_err) を入れる"""
-        def _run():
-            try:
-                wav = self.synthesize(text)
-                out.put((True, wav))
-            except Exception as e:
-                out.put((False, str(e)))
-        threading.Thread(target=_run, daemon=True).start()
-
 
 # ════════════════════════════════════════════════════════════════
-#  AudioPlayer — WAV をキューで順番に再生
+#  TtsPipeline — 合成→再生を順序保証で直列処理
 # ════════════════════════════════════════════════════════════════
 
-class AudioPlayer:
-    def __init__(self):
-        self._q = queue.Queue()
-        threading.Thread(target=self._loop, daemon=True).start()
+class TtsPipeline:
+    """
+    合成スレッド → 再生スレッドの2段キューパイプライン。
+    文の順序を保ちつつ、合成と再生を重畳して低レイテンシを実現。
+    wait_done() は合成・再生が全て完了するまで確実にブロックする。
+    """
 
-    def play(self, wav_bytes: bytes):
-        self._q.put(wav_bytes)
+    def __init__(self, vvx: VoicevoxClient):
+        self._vvx     = vvx
+        self._synth_q: queue.Queue = queue.Queue()  # str  → 合成スレッドへ
+        self._play_q:  queue.Queue = queue.Queue()  # bytes → 再生スレッドへ
+
+        threading.Thread(target=self._synth_loop, daemon=True).start()
+        threading.Thread(target=self._play_loop,  daemon=True).start()
+
+    def push(self, text: str):
+        """文を合成キューに追加（ノンブロッキング）"""
+        if text.strip():
+            self._synth_q.put(text)
 
     def wait_done(self):
-        self._q.join()
+        """合成・再生が全て完了するまで待機"""
+        self._synth_q.join()
+        self._play_q.join()
 
-    def _loop(self):
+    def _synth_loop(self):
         while True:
-            wav = self._q.get()
+            text = self._synth_q.get()
             try:
-                self._play(wav)
+                wav = self._vvx.synthesize(text)
+                self._play_q.put(wav)
+            except Exception as e:
+                safe_print(C.yellow(f"  [TTS] 合成失敗: {e}"), flush=True)
+            finally:
+                self._synth_q.task_done()
+
+    def _play_loop(self):
+        while True:
+            wav = self._play_q.get()
+            try:
+                self._play_wav(wav)
             except Exception as e:
                 safe_print(C.yellow(f"  [再生] エラー: {e}"), flush=True)
             finally:
-                self._q.task_done()
+                self._play_q.task_done()
 
     @staticmethod
-    def _play(wav_bytes: bytes):
+    def _play_wav(wav_bytes: bytes):
         with wave.open(io.BytesIO(wav_bytes)) as wf:
             rate   = wf.getframerate()
             swidth = wf.getsampwidth()
@@ -427,7 +443,7 @@ class VoicevoxAgent:
         self.rotator: "_v4.AccountRotator" = cfg["rotator"]
         self.cwd     = cfg["cwd"]
         self.vvx     = VoicevoxClient(cfg["voicevox_url"], cfg["speaker_id"])
-        self.player  = AudioPlayer()
+        self.tts     = TtsPipeline(self.vvx)
         self.tools_spec = build_tools_spec()
 
         # V4 コンポーネント
@@ -455,20 +471,8 @@ class VoicevoxAgent:
     # ── TTS ──────────────────────────────────────────────────────
 
     def _speak(self, text: str):
-        """VOICEVOX で合成してバックグラウンドで再生キューに追加（低レイテンシ）"""
-        if not text.strip():
-            return
-        q: queue.Queue = queue.Queue()
-        self.vvx.synthesize_to_queue(text, q)
-
-        def _wait():
-            ok, data = q.get()
-            if ok:
-                self.player.play(data)
-            else:
-                safe_print(C.yellow(f"  [TTS] 合成失敗: {data}"), flush=True)
-
-        threading.Thread(target=_wait, daemon=True).start()
+        """TtsPipeline に文を追加（合成→再生は順序保証）"""
+        self.tts.push(text)
 
     # ── 1ターン処理 ────────────────────────────────────────────────
 
@@ -556,7 +560,7 @@ class VoicevoxAgent:
             self.history.append(types.Content(role="user", parts=result_parts))
 
         # 再生完了を待つ
-        self.player.wait_done()
+        self.tts.wait_done()
         return "\n".join(full_response_parts)
 
     # ── 音声モード ────────────────────────────────────────────────
@@ -595,7 +599,7 @@ class VoicevoxAgent:
 
             if any(w in text for w in ["終了", "終わり", "バイバイ", "さようなら"]):
                 self._speak("終了します。")
-                self.player.wait_done()
+                self.tts.wait_done()
                 break
 
             try:
