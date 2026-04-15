@@ -110,7 +110,7 @@ def load_vvx_config() -> dict:
         "rotator":       _v4.AccountRotator(accounts),
         "voicevox_url":  raw.get("VOICEVOX_URL",    "http://127.0.0.1:50021"),
         "speaker_id":    int(raw.get("VVX_SPEAKER",  "3")),
-        "whisper_model": raw.get("WHISPER_MODEL",    "small"),
+        "whisper_model": raw.get("WHISPER_MODEL",    "turbo"),
         "system_prompt": system_prompt,
         "cwd":           raw.get("WORK_DIR",          str(Path.cwd())),
     }
@@ -380,7 +380,7 @@ class VoiceRecorder:
     SILENCE_SEC = 1.2       # 無音判定秒
     MIN_MS      = 400       # 最低発話長(ms)
 
-    def record(self) -> Optional[np.ndarray]:
+    def record(self, interrupt_check=None) -> Optional[np.ndarray]:
         silence_chunks = int(self.SILENCE_SEC * self.SR / self.CHUNK)
         frames: list[np.ndarray] = []
         silent = 0
@@ -391,6 +391,10 @@ class VoiceRecorder:
                             blocksize=self.CHUNK) as stream:
             try:
                 while True:
+                    # 割り込みチェック (GUI からのテキスト入力など)
+                    if interrupt_check and interrupt_check():
+                        return None
+
                     chunk, _ = stream.read(self.CHUNK)
                     rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
                     if rms > self.THRESH:
@@ -617,17 +621,26 @@ class VoicevoxAgent:
         self.executor.backup()
 
         while True:
+            # 割り込みチェック関数
+            def check_input():
+                return not self.input_queue.empty()
+
             # GUI からのテキスト入力を優先的にチェック
             try:
                 text = self.input_queue.get_nowait()
                 safe_print(C.cyan(f"\n  [あなた] {text} (Text)"), flush=True)
             except queue.Empty:
-                # テキストがなければ録音
+                # テキストがなければ録音 (割り込み可能)
                 try:
                     self._set_state("listening")
-                    audio = recorder.record()
+                    audio = recorder.record(interrupt_check=check_input)
                 except KeyboardInterrupt:
                     break
+                
+                # 録音中にテキストが入った場合はループの最初に戻って処理
+                if check_input() and audio is None:
+                    continue
+
                 if audio is None:
                     self._set_state("idle")
                     continue
