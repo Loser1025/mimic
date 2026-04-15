@@ -33,6 +33,7 @@ VOICEVOX + Gemini Flash + V4 フルスタック統合
     python voicevox_agent.py --whisper base  # Whisperモデルを指定
 """
 
+import os
 import sys
 import re
 import json
@@ -42,12 +43,14 @@ import io
 import queue
 import random
 import threading
+import tempfile
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import sounddevice as sd
 import requests
+from groq import Groq
 
 # ── パス設定 ──────────────────────────────────────────────────────
 _HERE = Path(__file__).parent
@@ -110,7 +113,8 @@ def load_vvx_config() -> dict:
         "rotator":       _v4.AccountRotator(accounts),
         "voicevox_url":  raw.get("VOICEVOX_URL",    "http://127.0.0.1:50021"),
         "speaker_id":    int(raw.get("VVX_SPEAKER",  "3")),
-        "whisper_model": raw.get("WHISPER_MODEL",    "turbo"),
+        "whisper_model": raw.get("WHISPER_MODEL",    "whisper-large-v3"),
+        "groq_api_key":  raw.get("GROQ_API_KEY",    ""),
         "system_prompt": system_prompt,
         "cwd":           raw.get("WORK_DIR",          str(Path.cwd())),
     }
@@ -345,28 +349,53 @@ class SentenceBuffer:
 # ════════════════════════════════════════════════════════════════
 
 class WhisperSTT:
-    def __init__(self, model_size: str = "tiny"):
-        safe_print(C.gray(f"  Whisper ({model_size}) を読み込み中..."), flush=True)
-        try:
-            from faster_whisper import WhisperModel
-            self._model = WhisperModel(model_size, device="cpu", compute_type="int8")
-            safe_print(C.green("  Whisper 準備完了"), flush=True)
-        except ImportError:
-            safe_print(C.red(
-                "  [エラー] faster-whisper が未インストールです。\n"
-                "  pip install faster-whisper を実行してください。"
-            ), flush=True)
-            sys.exit(1)
+    def __init__(self, model_size: str = "whisper-large-v3"):
+        safe_print(C.gray(f"  Groq API (Whisper {model_size}) を初期化中..."), flush=True)
+        # 呼び出し元で渡された cfg["groq_api_key"] を使うため、ここでは一旦 None
+        self._client = None
+        self._model = model_size
+
+    def set_api_key(self, api_key: str):
+        if not api_key:
+            safe_print(C.red("  [エラー] GROQ_API_KEY が設定されていません。"), flush=True)
+            return
+        self._client = Groq(api_key=api_key)
+        safe_print(C.green("  Groq API 準備完了"), flush=True)
 
     def transcribe(self, audio: np.ndarray, sr: int = 16000) -> str:
-        a = audio.astype(np.float32)
-        if a.max() > 1.0:
-            a /= 32768.0
-        segs, _ = self._model.transcribe(
-            a, language="ja", beam_size=1, best_of=1, temperature=0.0,
-            vad_filter=True,
-        )
-        return "".join(s.text for s in segs).strip()
+        if not self._client:
+            return "（Groq API キーが設定されていないため認識できません）"
+        
+        # NumPy 配列を WAV bytes に変換
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2) # int16
+                wf.setframerate(sr)
+                wf.writeframes(audio.tobytes())
+            wav_bytes = wav_io.getvalue()
+
+        try:
+            # Groq API はファイルライクオブジェクトを受け付ける
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(wav_bytes)
+                temp_name = f.name
+
+            with open(temp_name, "rb") as file:
+                transcription = self._client.audio.transcriptions.create(
+                    file=(temp_name, file),
+                    model=self._model,
+                    response_format="text",
+                )
+            
+            # 一時ファイルの削除
+            if os.path.exists(temp_name):
+                os.remove(temp_name)
+                
+            return transcription.strip()
+        except Exception as e:
+            safe_print(C.red(f"  [Groq STT] エラー: {e}"), flush=True)
+            return ""
 
 
 # ════════════════════════════════════════════════════════════════
@@ -607,6 +636,7 @@ class VoicevoxAgent:
 
     def run_voice(self, whisper_model: str):
         stt      = WhisperSTT(whisper_model)
+        stt.set_api_key(self.cfg.get("groq_api_key"))
         recorder = VoiceRecorder()
 
         safe_print(C.bold_green("\n  ◈ VOICEVOX 音声エージェント 起動"), flush=True)
