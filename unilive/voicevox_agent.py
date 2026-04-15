@@ -110,7 +110,7 @@ def load_vvx_config() -> dict:
         "rotator":       _v4.AccountRotator(accounts),
         "voicevox_url":  raw.get("VOICEVOX_URL",    "http://127.0.0.1:50021"),
         "speaker_id":    int(raw.get("VVX_SPEAKER",  "3")),
-        "whisper_model": raw.get("WHISPER_MODEL",    "tiny"),
+        "whisper_model": raw.get("WHISPER_MODEL",    "small"),
         "system_prompt": system_prompt,
         "cwd":           raw.get("WORK_DIR",          str(Path.cwd())),
     }
@@ -459,6 +459,9 @@ class VoicevoxAgent:
         self.tts     = TtsPipeline(self.vvx)
         self.tools_spec = build_tools_spec()
         self.on_state_change = on_state_change
+        
+        # GUI からのテキスト入力用キュー
+        self.input_queue = queue.Queue()
 
         # V4 コンポーネント
         from voice_agent import V4ToolExecutor
@@ -614,21 +617,27 @@ class VoicevoxAgent:
         self.executor.backup()
 
         while True:
+            # GUI からのテキスト入力を優先的にチェック
             try:
-                self._set_state("listening")
-                audio = recorder.record()
-            except KeyboardInterrupt:
-                break
-            if audio is None:
-                self._set_state("idle")
-                continue
+                text = self.input_queue.get_nowait()
+                safe_print(C.cyan(f"\n  [あなた] {text} (Text)"), flush=True)
+            except queue.Empty:
+                # テキストがなければ録音
+                try:
+                    self._set_state("listening")
+                    audio = recorder.record()
+                except KeyboardInterrupt:
+                    break
+                if audio is None:
+                    self._set_state("idle")
+                    continue
 
-            self._set_state("processing")
-            safe_print(C.gray("  文字起こし中..."), flush=True)
-            t0 = time.time()
-            text = stt.transcribe(audio)
-            elapsed = time.time() - t0
-            safe_print(C.cyan(f"\n  [あなた] {text}  ({elapsed:.1f}s)"), flush=True)
+                self._set_state("processing")
+                safe_print(C.gray("  文字起こし中..."), flush=True)
+                t0 = time.time()
+                text = stt.transcribe(audio)
+                elapsed = time.time() - t0
+                safe_print(C.cyan(f"\n  [あなた] {text}  ({elapsed:.1f}s)"), flush=True)
 
             if not text.strip():
                 safe_print(C.gray("  （聞き取れませんでした）"), flush=True)

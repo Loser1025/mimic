@@ -14,12 +14,13 @@ import time
 import random
 import math
 import threading
+import queue
 from pathlib import Path
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QLabel, QFrame, QSizePolicy, QTextEdit,
+    QSplitter, QLabel, QFrame, QLineEdit, QTextEdit,
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QThread, pyqtSignal, QRectF, QPointF,
@@ -58,14 +59,24 @@ _GRAY     = "#2a4a5a"
 _WHITE    = "#cce8f4"
 
 # ── メッセージ種別判定 ─────────────────────────────────────────────
+_LAST_KIND = 'system'
+
 def _classify(text: str) -> str:
+    global _LAST_KIND
     t = text.strip()
-    if '[あなた]'  in t: return 'user'
-    if 'AI >'      in t: return 'ai'
-    if any(x in t for x in ['[ツール]', 'ツールを実行', '[結果]', '⚡']): return 'tool'
-    if any(x in t for x in ['[エラー]', '✗', 'APIError']): return 'error'
-    if any(x in t for x in ['録音中', '🎙']): return 'system'
-    return 'system'
+    kind = 'system'
+    if '[あなた]'  in t: kind = 'user'
+    elif 'AI >'      in t: kind = 'ai'
+    elif any(x in t for x in ['[ツール]', 'ツールを実行', '[結果]', '⚡']): kind = 'tool'
+    elif any(x in t for x in ['[エラー]', '✗', 'APIError']): kind = 'error'
+    elif any(x in t for x in ['録音中', '🎙']): kind = 'system'
+    elif _LAST_KIND in ('ai', 'ai_text'):
+        kind = 'ai_text'
+    else:
+        kind = 'system'
+
+    _LAST_KIND = kind
+    return kind
 
 # ════════════════════════════════════════════════════════════════
 #  Visualizer
@@ -177,6 +188,7 @@ class ConversationLog(QTextEdit):
         colors = {
             'user': _CYAN,
             'ai': _GREEN,
+            'ai_text': _WHITE,
             'tool': _PURPLE,
             'error': _RED,
             'system': _GRAY
@@ -197,12 +209,12 @@ class ConversationLog(QTextEdit):
         fmt.setForeground(QColor(col))
         fmt.setFontWeight(QFont.Weight.Bold)
         fmt.setFontPointSize(9)
-        prefix = kind.upper()
+        prefix = kind.upper().replace('AI_TEXT', '       ')
         cursor.insertText(f"{prefix:>7} | ", fmt)
         
         # 本文
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(_WHITE if kind in ('user', 'ai') else col))
+        fmt.setForeground(QColor(_WHITE if kind in ('user', 'ai', 'ai_text') else col))
         fmt.setFontWeight(QFont.Weight.Bold if kind in ('user', 'ai') else QFont.Weight.Normal)
         fmt.setFontPointSize(10)
         cursor.insertText(f"{text}\n", fmt)
@@ -219,6 +231,14 @@ class VoicevoxAgentThread(QThread):
     status = pyqtSignal(str, bool)
     vis_state = pyqtSignal(str)
 
+    def __init__(self):
+        super().__init__()
+        self.agent = None
+
+    def send_text(self, text: str):
+        if self.agent:
+            self.agent.input_queue.put(text)
+
     def run(self):
         cfg = _va.load_vvx_config()
         
@@ -229,7 +249,7 @@ class VoicevoxAgentThread(QThread):
             elif s == 'speaking': self.status.emit('SPEAKING', True)
             else: self.status.emit('ONLINE', True)
 
-        agent = _va.VoicevoxAgent(cfg, on_state_change=on_state)
+        self.agent = _va.VoicevoxAgent(cfg, on_state_change=on_state)
         
         # safe_print をフックして GUI ログへ送る
         def patched_print(*args, **kwargs):
@@ -246,7 +266,7 @@ class VoicevoxAgentThread(QThread):
         self.message.emit('system', 'エージェントが起動しました。')
         
         try:
-            agent.run_voice(cfg['whisper_model'])
+            self.agent.run_voice(cfg['whisper_model'])
         except Exception as e:
             self.message.emit('error', f'エラーが発生しました: {e}')
         finally:
@@ -283,8 +303,11 @@ class MainWindow(QMainWindow):
         layout.addLayout(header)
 
         # メイン分割エリア
+        main_content = QWidget()
+        main_layout = QHBoxLayout(main_content)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         split = QSplitter(Qt.Orientation.Horizontal)
-        layout.addWidget(split, 1)
+        main_layout.addWidget(split)
         
         # 左側: ビジュアルパネル
         left_panel = QFrame()
@@ -302,6 +325,29 @@ class MainWindow(QMainWindow):
         split.addWidget(self.log)
         
         split.setSizes([350, 750])
+        layout.addWidget(main_content, 1)
+
+        # 入力エリア
+        input_layout = QHBoxLayout()
+        self.input_field = QLineEdit()
+        self.input_field.setPlaceholderText("メッセージを入力してね（Enterで送信）...")
+        self.input_field.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {_BG2};
+                color: {_WHITE};
+                border: 1px solid {_CYAN_DIM};
+                padding: 10px;
+                border-radius: 5px;
+                font-family: Consolas;
+                font-size: 11pt;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {_CYAN};
+            }}
+        """)
+        self.input_field.returnPressed.connect(self._send_text)
+        input_layout.addWidget(self.input_field)
+        layout.addLayout(input_layout)
         
         # フッター
         footer = QLabel(f"WORK DIR: {Path.cwd()}")
@@ -315,6 +361,12 @@ class MainWindow(QMainWindow):
         self.thread.vis_state.connect(self.vis.set_state)
         self.thread.status.connect(self._on_status)
         self.thread.start()
+
+    def _send_text(self):
+        text = self.input_field.text().strip()
+        if text:
+            self.thread.send_text(text)
+            self.input_field.clear()
 
     def _on_status(self, label, connected):
         self.st_lbl.setText(label)
