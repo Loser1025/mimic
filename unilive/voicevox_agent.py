@@ -194,7 +194,7 @@ def _gemini_stream(rotator: "_v4.AccountRotator", contents: list,
 
 
 # ════════════════════════════════════════════════════════════════
-#  VOICEVOX クライアント
+#  Speech Synthesis Clients (VOICEVOX / Style-Bert-VITS2)
 # ════════════════════════════════════════════════════════════════
 
 class VoicevoxClient:
@@ -209,13 +209,7 @@ class VoicevoxClient:
         except Exception:
             return False
 
-    def speakers(self) -> list:
-        r = self._sess.get(f"{self.base_url}/speakers", timeout=5)
-        r.raise_for_status()
-        return r.json()
-
     def synthesize(self, text: str) -> bytes:
-        """テキスト → WAV bytes"""
         r = self._sess.post(
             f"{self.base_url}/audio_query",
             params={"text": text, "speaker": self.speaker_id},
@@ -231,6 +225,36 @@ class VoicevoxClient:
         r2.raise_for_status()
         return r2.content
 
+class StyleBertVits2Client:
+    """Style-Bert-VITS2 API クライアント (デフォルト: 127.0.0.1:5000)"""
+    def __init__(self, base_url: str, model_id: int = 0, style: str = "Neutral"):
+        self.base_url = base_url.rstrip("/")
+        self.model_id = model_id
+        self.style    = style
+        self._sess    = requests.Session()
+
+    def alive(self) -> bool:
+        try:
+            # モデル一覧が取得できれば生存確認
+            return self._sess.get(f"{self.base_url}/models/info", timeout=3).status_code == 200
+        except Exception:
+            return False
+
+    def synthesize(self, text: str) -> bytes:
+        """テキスト → WAV bytes (Style-Bert-VITS2 API 経由)"""
+        r = self._sess.get(
+            f"{self.base_url}/voice",
+            params={
+                "text":      text,
+                "model_id":  self.model_id,
+                "style":     self.style,
+                "sdp_ratio": 0.2, # 感情の強さ
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.content
+
 
 # ════════════════════════════════════════════════════════════════
 #  TtsPipeline — 合成→再生を順序保証で直列処理
@@ -243,8 +267,8 @@ class TtsPipeline:
     wait_done() は合成・再生が全て完了するまで確実にブロックする。
     """
 
-    def __init__(self, vvx: VoicevoxClient):
-        self._vvx     = vvx
+    def __init__(self, vvx_or_vits2):
+        self._vvx     = vvx_or_vits2
         self._synth_q: queue.Queue = queue.Queue()  # str  → 合成スレッドへ
         self._play_q:  queue.Queue = queue.Queue()  # bytes → 再生スレッドへ
 
@@ -488,10 +512,21 @@ class VoicevoxAgent:
         self.cfg     = cfg
         self.rotator: "_v4.AccountRotator" = cfg["rotator"]
         self.cwd     = cfg["cwd"]
-        self.vvx     = VoicevoxClient(cfg["voicevox_url"], cfg["speaker_id"])
-        self.tts     = TtsPipeline(self.vvx)
-        self.tools_spec = build_tools_spec()
         self.on_state_change = on_state_change
+        
+        # 音声合成エンジンの自動選択
+        vvx = VoicevoxClient(cfg["voicevox_url"], cfg["speaker_id"])
+        vits2 = StyleBertVits2Client(cfg.get("vits2_url", "http://127.0.0.1:5000"))
+        
+        if vits2.alive():
+            safe_print(C.green("  [TTS] Style-Bert-VITS2 を使用します (高音質モード)"))
+            self.tts_client = vits2
+        else:
+            safe_print(C.green("  [TTS] VOICEVOX を使用します"))
+            self.tts_client = vvx
+
+        self.tts     = TtsPipeline(self.tts_client)
+        self.tools_spec = build_tools_spec()
         
         # GUI からのテキスト入力用キュー
         self.input_queue = queue.Queue()
@@ -778,15 +813,20 @@ def main():
         _show_speakers(cfg["voicevox_url"])
         return
 
-    # VOICEVOX 接続確認
+    # 音声合成エンジンの接続確認
     vvx = VoicevoxClient(cfg["voicevox_url"], cfg["speaker_id"])
-    if not vvx.alive():
+    vits2 = StyleBertVits2Client(cfg.get("vits2_url", "http://127.0.0.1:5000"))
+    
+    if vits2.alive():
+        safe_print(C.green(f"  Style-Bert-VITS2 接続OK ({vits2.base_url})"), flush=True)
+    elif vvx.alive():
+        safe_print(C.green(f"  VOICEVOX 接続OK ({cfg['voicevox_url']})"), flush=True)
+    else:
         safe_print(C.red(
-            f"  [エラー] VOICEVOX に接続できません ({cfg['voicevox_url']})\n"
-            "  VOICEVOX を起動してから再実行してください。"
+            f"  [エラー] 音声合成エンジンに接続できません。\n"
+            "  VOICEVOX または Style-Bert-VITS2 を起動してから再実行してください。"
         ), flush=True)
         sys.exit(1)
-    safe_print(C.green(f"  VOICEVOX 接続OK  ({cfg['voicevox_url']})"), flush=True)
 
     agent = VoicevoxAgent(cfg)
 
