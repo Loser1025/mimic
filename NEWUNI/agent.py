@@ -21,7 +21,8 @@ from typing import Optional, Any
 from dataclasses import dataclass, field
 from NEWUNI.utils import safe_print, C, log, TokenBucket
 from NEWUNI.config import (AccountConfig, PortContext, build_port_context, render_port_context,
-                                GEMINI_API_BASE)
+                                OR_API_BASE)
+import NEWUNI.config as _agent_cfg
 from NEWUNI.rag import LongTermMemory, SessionRAG, ProjectRAG, _fmt_msg_for_summary
 from NEWUNI.autogit import AutoGit, ReactLog
 from NEWUNI.tools import ToolRegistry, clear_read_files_registry
@@ -54,55 +55,46 @@ class RateLimitError(GeminiAPIError):
 class ServerError(GeminiAPIError):
     pass
 
-def _to_gemini_contents(messages: list[dict]) -> list[dict]:
-    """
-    内部メッセージ形式を Gemini API の contents 形式に変換する。
+def _to_openai_messages(messages: list[dict],
+                        system_prompt: Optional[str] = None) -> list[dict]:
+    """内部メッセージ形式を OpenAI / OpenRouter 互換の messages 配列に変換する。"""
+    result: list[dict] = []
+    if system_prompt:
+        result.append({"role": "system", "content": system_prompt})
 
-    内部形式:
-      {"role": "user",      "content": "text"}
-      {"role": "assistant", "content": "thought", "function_calls": [{"name":..,"args":..}]}
-      {"role": "user",      "content": "",        "function_results": [{"name":..,"result":..}]}
+    call_counter = 0
+    pending_ids: list[str] = []
 
-    Gemini API 形式:
-      {"role": "user",  "parts": [{"text": "..."}]}
-      {"role": "model", "parts": [{"text": "..."}, {"functionCall": {...}}]}
-      {"role": "user",  "parts": [{"functionResponse": {"name":..,"response":{"result":..}}}]}
-    """
-    contents = []
     for m in messages:
         role = m.get("role", "user")
-        gemini_role = "user" if role == "user" else "model"
 
         if m.get("function_results"):
-            # functionResponse メッセージ（ツール結果）
-            parts = [
-                {
-                    "functionResponse": {
-                        "name": r["name"],
-                        "response": {"result": r["result"]}
-                    }
-                }
-                for r in m["function_results"]
-            ]
-            contents.append({"role": "user", "parts": parts})
+            for i, r in enumerate(m["function_results"]):
+                call_id = pending_ids[i] if i < len(pending_ids) else f"call_{call_counter + i}"
+                result.append({"role": "tool", "tool_call_id": call_id,
+                                "content": str(r.get("result", ""))})
+            pending_ids = []
 
         elif m.get("function_calls") and role == "assistant":
-            # functionCall を含むモデルの応答
-            parts: list[dict] = []
-            if m.get("content"):
-                parts.append({"text": m["content"]})
-            parts += [
-                {"functionCall": {"name": fc["name"], "args": fc.get("args", {})}}
-                for fc in m["function_calls"]
-            ]
-            contents.append({"role": "model", "parts": parts})
+            tool_calls = []
+            pending_ids = []
+            for fc in m["function_calls"]:
+                call_id = f"call_{call_counter}"
+                call_counter += 1
+                pending_ids.append(call_id)
+                tool_calls.append({"id": call_id, "type": "function",
+                                   "function": {"name": fc["name"],
+                                                "arguments": json.dumps(fc.get("args", {}),
+                                                                        ensure_ascii=False)}})
+            result.append({"role": "assistant", "content": m.get("content") or None,
+                           "tool_calls": tool_calls})
 
         else:
             content_text = str(m.get("content", ""))
             if content_text:
-                contents.append({"role": gemini_role, "parts": [{"text": content_text}]})
+                result.append({"role": role, "content": content_text})
 
-    return contents
+    return result
 
 def _msg_char_count(m: dict) -> int:
     """メッセージの文字数を返す（function_results も含む）"""
@@ -194,63 +186,37 @@ def _repair_message_sequence(messages: list[dict]) -> list[dict]:
         repaired.append(m)
     return repaired
 
-def _call_gemini_api(account: AccountConfig, messages: list[dict],
-                     tool_specs: list[dict],
-                     system_prompt: Optional[str] = None,
-                     json_mode: bool = False) -> dict:
-    """Gemini API を直接呼び出す（urllib のみ使用）"""
-    url = f"{GEMINI_API_BASE}/{account.model}:generateContent?key={account.api_key}"
-
-    # Gemini 形式への変換（functionCall / functionResponse 正式フォーマット対応）
-    contents = _to_gemini_contents(messages)
-
-    # Gemma 4 は thinkingBudget 非対応。thinking は system prompt の <|think|> トークンで制御。
-    # Gemini 2.5 系は thinkingBudget 対応。モデル名で自動判別。
-    is_gemini_thinking_supported = (
-        "gemini-2.5" in account.model or
-        "gemini-3" in account.model
-    )
-    payload: dict[str, Any] = {"contents": contents}
-
-    # system_instruction として正式に送信（会話メッセージと明確に分離）
-    if system_prompt:
-        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
-
-    gen_config: dict[str, Any] = {}
-    if is_gemini_thinking_supported:
-        thinking_budget_map = {"HIGH": -1, "MEDIUM": 8192, "LOW": 1024, "NONE": 0}
-        thinking_budget = thinking_budget_map.get(account.thinking_level.upper(), -1)
-        if thinking_budget != 0:
-            gen_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
-    if json_mode:
-        gen_config["response_mime_type"] = "application/json"
-    if gen_config:
-        payload["generationConfig"] = gen_config
-
+def _call_openrouter_api(account: AccountConfig, messages: list[dict],
+                         tool_specs: list[dict],
+                         system_prompt: Optional[str] = None,
+                         json_mode: bool = False) -> dict:
+    """OpenRouter API を呼び出す（OpenAI 互換、urllib のみ使用）"""
+    openai_messages = _to_openai_messages(messages, system_prompt)
+    payload: dict[str, Any] = {"model": account.model, "messages": openai_messages}
+    if _agent_cfg._MAX_TOKENS:
+        payload["max_tokens"] = _agent_cfg._MAX_TOKENS
     if tool_specs:
-        payload["tools"] = [{
-            "functionDeclarations": tool_specs
-        }]
-        payload["toolConfig"] = {
-            "functionCallingConfig": {"mode": "AUTO"}
-        }
+        payload["tools"] = [{"type": "function", "function": s} for s in tool_specs]
+        payload["tool_choice"] = "auto"
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
+        OR_API_BASE, data=body,
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {account.api_key}",
+                 "HTTP-Referer": "https://localhost",
+                 "X-Title": "NEWUNI"},
         method="POST",
     )
-
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body_text = e.read().decode("utf-8", errors="replace")
         try:
-            err_json = json.loads(body_text)
-            msg = err_json.get("error", {}).get("message", body_text)
+            msg = json.loads(body_text).get("error", {}).get("message", body_text)
         except Exception:
             msg = body_text
         if e.code == 429:
@@ -261,53 +227,33 @@ def _call_gemini_api(account: AccountConfig, messages: list[dict],
     except urllib.error.URLError as e:
         raise GeminiAPIError(0, f"ネットワークエラー: {e.reason}")
 
-def _stream_gemini_api(account: AccountConfig, messages: list[dict],
-                       tool_specs: list[dict],
-                       system_prompt: Optional[str] = None,
-                       json_mode: bool = False):
-    """
-    streamGenerateContent SSE エンドポイントでストリーミング呼び出し。
-
-    yields (text_chunk: str, tool_calls: list[dict], finish_reason: str)
-      text_chunk   : テキストのかたまり（空文字の場合あり）
-      tool_calls   : functionCall が含まれるチャンクのみ非空リスト
-      finish_reason: 最終チャンクでのみ非空文字列
-    """
-    url = (f"{GEMINI_API_BASE}/{account.model}"
-           f":streamGenerateContent?alt=sse&key={account.api_key}")
-
-    # ─ payload（_call_gemini_api と同じ構成）─
-    # functionCall / functionResponse 正式フォーマット対応
-    contents = _to_gemini_contents(messages)
-
-    is_gemini_thinking_supported = (
-        "gemini-2.5" in account.model or "gemini-3" in account.model
-    )
-    payload: dict[str, Any] = {"contents": contents}
-
-    if system_prompt:
-        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
-
-    gen_config: dict[str, Any] = {}
-    if is_gemini_thinking_supported:
-        thinking_budget_map = {"HIGH": -1, "MEDIUM": 8192, "LOW": 1024, "NONE": 0}
-        thinking_budget = thinking_budget_map.get(account.thinking_level.upper(), -1)
-        if thinking_budget != 0:
-            gen_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
-    if json_mode:
-        gen_config["response_mime_type"] = "application/json"
-    if gen_config:
-        payload["generationConfig"] = gen_config
+def _stream_openrouter_api(account: AccountConfig, messages: list[dict],
+                           tool_specs: list[dict],
+                           system_prompt: Optional[str] = None,
+                           json_mode: bool = False):
+    """OpenRouter SSE ストリーミング呼び出し。yields (text_chunk, tool_calls, finish_reason)"""
+    openai_messages = _to_openai_messages(messages, system_prompt)
+    payload: dict[str, Any] = {"model": account.model, "messages": openai_messages, "stream": True}
+    if _agent_cfg._MAX_TOKENS:
+        payload["max_tokens"] = _agent_cfg._MAX_TOKENS
     if tool_specs:
-        payload["tools"] = [{"functionDeclarations": tool_specs}]
-        payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+        payload["tools"] = [{"type": "function", "function": s} for s in tool_specs]
+        payload["tool_choice"] = "auto"
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req  = urllib.request.Request(
-        url, data=body,
-        headers={"Content-Type": "application/json"},
+    req = urllib.request.Request(
+        OR_API_BASE, data=body,
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {account.api_key}",
+                 "HTTP-Referer": "https://localhost",
+                 "X-Title": "NEWUNI"},
         method="POST",
     )
+
+    tool_calls_acc: dict[int, dict] = {}
+    final_finish_reason = "stop"
 
     try:
         with urllib.request.urlopen(req, timeout=180) as resp:
@@ -316,31 +262,45 @@ def _stream_gemini_api(account: AccountConfig, messages: list[dict],
                 if not line.startswith("data: "):
                     continue
                 data_str = line[6:]
-                if not data_str or data_str == "[DONE]":
+                if data_str == "[DONE]":
+                    break
+                if not data_str:
                     continue
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
-
-                candidates = chunk.get("candidates", [])
-                if not candidates:
+                choices = chunk.get("choices", [])
+                if not choices:
                     continue
-                candidate     = candidates[0]
-                parts         = candidate.get("content", {}).get("parts", [])
-                finish_reason = candidate.get("finishReason", "")
+                choice = choices[0]
+                delta  = choice.get("delta", {})
+                reason = choice.get("finish_reason")
+                if reason:
+                    final_finish_reason = reason
+                for rtc in delta.get("tool_calls") or []:
+                    idx = rtc.get("index", 0)
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {"name": "", "arguments": ""}
+                    fn = rtc.get("function", {})
+                    if fn.get("name"):
+                        tool_calls_acc[idx]["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        tool_calls_acc[idx]["arguments"] += fn["arguments"]
+                text_chunk = delta.get("content") or ""
+                if text_chunk:
+                    yield text_chunk, [], ""
 
-                text_chunk = ""
-                chunk_tools: list[dict] = []
-                for part in parts:
-                    if "text" in part:
-                        text_chunk += part["text"]
-                    elif "functionCall" in part:
-                        fc = part["functionCall"]
-                        chunk_tools.append({"name": fc["name"],
-                                            "args": fc.get("args", {})})
-
-                yield text_chunk, chunk_tools, finish_reason
+        tool_calls: list[dict] = []
+        for v in (tool_calls_acc[k] for k in sorted(tool_calls_acc)):
+            if not v.get("name"):
+                continue
+            try:
+                args = json.loads(v["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append({"name": v["name"], "args": args})
+        yield "", tool_calls, final_finish_reason
 
     except urllib.error.HTTPError as e:
         body_text = e.read().decode("utf-8", errors="replace")
@@ -474,7 +434,8 @@ BASE_BACKOFF = 2.0       # 秒
 
 MAX_BACKOFF = 120.0      # 秒
 
-MAX_TOOL_ROUNDS = 50     # 1ターンあたりのツール呼び出し上限（RPD無制限のため拡大）
+MAX_TOOL_ROUNDS = 50
+MAX_PARALLEL_TOOLS = 3     # 1ターンあたりのツール呼び出し上限（RPD無制限のため拡大）
 
 TOOL_OUTPUT_LIMIT = 10000   # ツール出力の文字数上限（コンテキスト肥大化抑制のため削減）
 
@@ -565,6 +526,13 @@ class GeminiAgent:
         self.json_mode: bool = False  # True のとき API に response_mime_type: application/json を指定
         self._session_rag: Optional[SessionRAG] = None  # 圧縮済み会話のRAGストア
         self._project_rag: Optional[ProjectRAG] = get_shared_project_rag(self.cwd)  # 共有RAG
+        self._pending_threads: list[threading.Thread] = []
+
+    def wait_background_tasks(self, timeout: float = 5.0):
+        """バックグラウンドスレッドの完了を待つ"""
+        for t in self._pending_threads:
+            t.join(timeout=timeout)
+        self._pending_threads.clear()
 
     def set_system_prompt(self, prompt: str):
         self.system_prompt = prompt
@@ -737,7 +705,7 @@ class GeminiAgent:
                           "tokens": tokens,
                           "rpd_left": account.bucket.rpd_remaining,
                           "msg_count": len(working_messages)})
-                response = _call_gemini_api(account, working_messages, tool_specs,
+                response = _call_openrouter_api(account, working_messages, tool_specs,
                                             system_prompt=self.system_prompt,
                                             json_mode=self.json_mode)
                 log.info({"event": "api_ok", "account": account.name})
@@ -847,7 +815,7 @@ class GeminiAgent:
                 header_printed        = False  # 💭 プレフィックス表示済みフラグ
 
                 try:
-                    for text_chunk, chunk_tools, _ in _stream_gemini_api(
+                    for text_chunk, chunk_tools, _ in _stream_openrouter_api(
                         account, working_messages, tool_specs, self.system_prompt,
                         json_mode=self.json_mode
                     ):
@@ -902,7 +870,7 @@ class GeminiAgent:
                               MAX_BACKOFF)
                 # 初回エラー時のみ送信内容の構造をダンプ
                 if attempt == 0:
-                    contents_debug = _to_gemini_contents(working_messages)
+                    contents_debug = _to_openai_messages(working_messages)
                     struct = [
                         {"role": c["role"],
                          "part_types": [list(p.keys())[0] for p in c.get("parts", [])]}
@@ -967,24 +935,24 @@ class GeminiAgent:
 
     def _extract_text(self, response: dict) -> Optional[str]:
         try:
-            parts = response["candidates"][0]["content"]["parts"]
-            texts = [p["text"] for p in parts if "text" in p]
-            return "\n".join(texts) if texts else None
+            return response["choices"][0]["message"].get("content") or None
         except (KeyError, IndexError):
             return None
 
     def _extract_tool_calls(self, response: dict) -> list[dict]:
         try:
-            parts = response["candidates"][0]["content"]["parts"]
-            return [p["functionCall"] for p in parts if "functionCall" in p]
+            raw = response["choices"][0]["message"].get("tool_calls") or []
+            return [{"name": tc["function"]["name"],
+                     "args": json.loads(tc["function"].get("arguments") or "{}")}
+                    for tc in raw]
         except (KeyError, IndexError):
             return []
 
     def _finish_reason(self, response: dict) -> str:
         try:
-            return response["candidates"][0].get("finishReason", "UNKNOWN")
+            return response["choices"][0].get("finish_reason", "stop") or "stop"
         except (KeyError, IndexError):
-            return "UNKNOWN"
+            return "stop"
 
     def _summarize_if_long(self, tool_name: str, result_str: str) -> str:
         """
@@ -1153,7 +1121,9 @@ class GeminiAgent:
                             self._project_rag.save(self.cwd) # 永続化
                     except Exception as _ie:
                         log.warning({"event": "project_rag_index_error", "error": str(_ie)})
-                threading.Thread(target=_bg_index, daemon=True).start()
+                _t = threading.Thread(target=_bg_index, daemon=True)
+                _t.start()
+                self._pending_threads.append(_t)
 
             except Exception as _e:
                 log.warning({"event": "project_rag_retrieve_error", "error": str(_e)})
@@ -1177,7 +1147,7 @@ class GeminiAgent:
                       "tool_calls": len(tool_calls)})
 
             # ── ツール呼び出しがある場合 ──
-            if tool_calls and finish in ("STOP", "TOOL_CALLS", "OTHER", ""):
+            if tool_calls and finish in ("STOP", "TOOL_CALLS", "OTHER", "tool_calls", "stop", ""):
                 tool_round += 1
                 if tool_round > MAX_TOOL_ROUNDS:
                     log.warning({"event": "tool_limit_reached"})
@@ -1197,7 +1167,7 @@ class GeminiAgent:
                 if len(tool_calls) > 1:
                     safe_print(C.orange(f"  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
                     ordered: list[Optional[dict]] = [None] * len(tool_calls)
-                    with ThreadPoolExecutor(max_workers=len(tool_calls)) as tpool:
+                    with ThreadPoolExecutor(max_workers=min(len(tool_calls), MAX_PARALLEL_TOOLS)) as tpool:
                         fmap = {
                             tpool.submit(self._run_single_tool, tc): i
                             for i, tc in enumerate(tool_calls)
@@ -1288,7 +1258,9 @@ class GeminiAgent:
                         safe_print(C.gray(f"  [ProjectRAG] インデックス完了: {n}チャンク"), flush=True)
                     except Exception as _ie:
                         log.warning({"event": "project_rag_index_error", "error": str(_ie)})
-                threading.Thread(target=_bg_index_stream, daemon=True).start()
+                _t = threading.Thread(target=_bg_index_stream, daemon=True)
+                _t.start()
+                self._pending_threads.append(_t)
             elif self._project_rag.chunk_count > 0:
                 p_retrieved = self._project_rag.retrieve(user_message, api_key)
                 if p_retrieved:
@@ -1335,7 +1307,7 @@ class GeminiAgent:
                 if len(tool_calls) > 1:
                     safe_print(C.orange(f"  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
                     ordered: list[Optional[dict]] = [None] * len(tool_calls)
-                    with ThreadPoolExecutor(max_workers=len(tool_calls)) as tpool:
+                    with ThreadPoolExecutor(max_workers=min(len(tool_calls), MAX_PARALLEL_TOOLS)) as tpool:
                         fmap = {
                             tpool.submit(self._run_single_tool, tc): i
                             for i, tc in enumerate(tool_calls)
