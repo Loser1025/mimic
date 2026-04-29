@@ -7,7 +7,7 @@ from googleapiclient.discovery import build
 # 認証情報のパス
 CLIENT_SECRET_FILE = r'C:\Users\Loser\Desktop\-\-\nurse_list_deploy\client_secret.json'
 TOKEN_FILE = r'C:\Users\Loser\Desktop\-\-\nurse_list_deploy\token.json'
-SPREADSHEET_ID = '1Mqq4gb0erNC6H3NPKvvorEaVgFxwdOB-EBxnYb4zru4'
+SPREADSHEET_ID = '1BJYhsb38mCtVOpHdfm-RUOdAiQyhIVTSP2qKP3nTeP0'
 SHEET_NAME = 'りうにう'
 
 def main():
@@ -27,20 +27,23 @@ def main():
     service = build('sheets', 'v4', credentials=creds)
 
     # シートの内容を取得
-    range_name = f"'{SHEET_NAME}'!A1:Z100"
-    result = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range=range_name
-    ).execute()
-    
-    values = result.get('values', [])
+    try:
+        range_name = f"'{SHEET_NAME}'!A1:Z100"
+        result = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=range_name
+        ).execute()
+        
+        values = result.get('values', [])
 
-    if not values:
-        print('No data found.')
-    else:
-        print(f'Data found in sheet "{SHEET_NAME}":')
-        for i, row in enumerate(values):
-            print(f'Row {i+1}: {row}')
+        if not values:
+            print('No data found.')
+        else:
+            print(f'Data found in sheet "{SHEET_NAME}":')
+            for i, row in enumerate(values):
+                print(f'Row {i+1}: {row}')
+    except Exception as e:
+        print(f"Error occurred: {e}")
 
 if __name__ == '__main__':
     main()
