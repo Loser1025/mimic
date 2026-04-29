@@ -101,42 +101,28 @@ async def upload_raw_data_to_sheet(csv_path, sheet_name):
 async def run_appointment_aggregation():
     async with async_playwright() as p:
         browser, page = await login_and_get_page(p)
-        try:
-            # Corrected mojibake for "予約電話"
-            status_dropdown = page.locator("#status_chu")
-            await status_dropdown.select_option(label="予約電話")
-            
-            today = datetime.now()
-            day_after_tomorrow = today + timedelta(days=2)
-            await page.locator("#DateLastStart-y").select_option(value=str(today.year))
-            await asyncio.sleep(0.7)
-            await page.locator("#DateLastStart-m").select_option(index=today.month)
-            await asyncio.sleep(0.7)
-            await page.locator("#DateLastStart-d").select_option(index=today.day)
-            await asyncio.sleep(0.7)
-            await page.locator("#DateLastEnd-y").select_option(value=str(day_after_tomorrow.year))
-            await asyncio.sleep(0.7)
-            await page.locator("#DateLastEnd-m").select_option(index=day_after_tomorrow.month)
-            await asyncio.sleep(0.7)
-            await page.locator("#DateLastEnd-d").select_option(index=day_after_tomorrow.day)
-            
-            search_button = page.get_by_role("button", name="絞込")
-            if await search_button.count() == 0:
-                search_button = page.locator("button:has-text('絞込')")
-                
-            await search_button.click()
-            await page.wait_for_load_state("networkidle")
-            
-            export_button = page.get_by_role("button", name="CSV抽出")
-            if await export_button.count() == 0:
-                export_button = page.locator("button:has-text('CSV抽出')")
-                
-            await export_button.click()
-            async with page.expect_download() as download_info:
-                await asyncio.sleep(1) 
-            download = await download_info.value
-            await download.save_as(CSV_TEMP_PATH)
-            await upload_pivot_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["aggregation"])
+try:
+    # Corrected mojibake for "予約電話"
+    status_dropdown = page.locator("#status_chu")
+    await status_dropdown.select_option(label="予約電話")
+    
+    search_button = page.get_by_role("button", name="絞込")
+    if await search_button.count() == 0:
+        search_button = page.locator("button:has-text('絞込')")
+        
+    await search_button.click()
+    await page.wait_for_load_state("networkidle")
+    
+    export_button = page.get_by_role("button", name="CSV抽出")
+    if await export_button.count() == 0:
+        export_button = page.locator("button:has-text('CSV抽出')")
+        
+    await export_button.click()
+    async with page.expect_download() as download_info:
+        await asyncio.sleep(1) 
+    download = await download_info.value
+    await download.save_as(CSV_TEMP_PATH)
+    await upload_pivot_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["aggregation"])
         except Exception as e:
             print(f"Error in run_appointment_aggregation: {e}")
             await page.screenshot(path=r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\error_aggregation.png")
