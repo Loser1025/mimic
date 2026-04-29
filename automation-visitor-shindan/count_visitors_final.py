@@ -169,7 +169,6 @@ async def upload_pivot_to_sheet(csv_path, sheet_name):
         tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         
         # 「次回対応日」を日付型に変換し、日付部分と時間部分を抽出する
-        # 形式例: "2026-05-01 19:00:00" -> date="2026-05-01", hour="19:00"
         df['次回対応日_dt'] = pd.to_datetime(df['次回対応日'])
         df['次回対応日_date'] = df['次回対応日_dt'].dt.strftime('%Y-%m-%d')
         df['次回対応日_hour'] = df['次回対応日_dt'].dt.strftime('%H:00')
@@ -190,8 +189,9 @@ async def upload_pivot_to_sheet(csv_path, sheet_name):
             for day in [today_str, tomorrow_str]:
                 for hour in range(9, 22):
                     hour_str = f"{hour:02}:00"
-                    # 日付と時間が一致する件数をカウント
-                    count = len(df_filtered[(df_filtered['次回対応日_date'] == day) & 
+                    # 【修正】担当者(person)、日付(day)、時間(hour_str)のすべてが一致する件数をカウント
+                    count = len(df_filtered[(df_filtered['本人確認状況'] == person) & 
+                                           (df_filtered['次回対応日_date'] == day) & 
                                            (df_filtered['次回対応日_hour'] == hour_str)])
                     row.append(count)
                 row.append("") # 区切り用空白列
