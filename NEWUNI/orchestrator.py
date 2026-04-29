@@ -16,7 +16,7 @@ from typing import Optional, Any
 from dataclasses import dataclass, field
 from NEWUNI.utils import safe_print, C, log, PipelineTypewriter
 from NEWUNI.config import PortContext, build_port_context, render_port_context
-from NEWUNI.agent import (GeminiAgent, AccountRotator, _stream_gemini_api,
+from NEWUNI.agent import (GeminiAgent, AccountRotator, _stream_openrouter_api as _stream_gemini_api,
                                _trim_messages_smart, _repair_message_sequence,
                                GeminiAPIError, RateLimitError, ServerError,
                                MAX_RETRIES, BASE_BACKOFF, MAX_BACKOFF, MAX_TOOL_ROUNDS,

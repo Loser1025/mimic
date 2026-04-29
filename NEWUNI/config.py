@@ -91,8 +91,9 @@ def render_port_context(ctx: PortContext) -> str:
     return "\n".join(lines)
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+OR_API_BASE     = "https://openrouter.ai/api/v1/chat/completions"
 
-_DEFAULT_MODEL      = "gemini-2.0-flash"
+_DEFAULT_MODEL      = "nvidia/nemotron-3-super-120b-a12b:free"
 
 _EMBEDDING_MODEL    = "gemini-embedding-2-preview"
 
@@ -170,29 +171,26 @@ def load_config(base_dir: Optional[str] = None) -> tuple[list[AccountConfig], st
 
         # モデル名グローバルを .env の値で上書き
         global _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL, _DEFAULT_CWD
-        _DEFAULT_MODEL   = env.get("GEMINI_MODEL",   _DEFAULT_MODEL)
+        _DEFAULT_MODEL   = env.get("OR_NEMOTRON_MODEL", env.get("OR_MODEL", _DEFAULT_MODEL))
         _EMBEDDING_MODEL = env.get("EMBEDDING_MODEL", _EMBEDDING_MODEL)
         _HYDE_MODEL      = env.get("HYDE_MODEL",      _HYDE_MODEL)
         _DEFAULT_CWD     = env.get("DEFAULT_CWD",     None) or None
 
-        model      = _DEFAULT_MODEL  # アカウントごとの上書きベース
-        rpm_limit  = int(env.get("GEMINI_RPM", "15"))
-        # GEMINI_RPD=0 または GEMINI_RPD=unlimited で RPD無制限モード
-        rpd_raw    = env.get("GEMINI_RPD", "1500").strip().lower()
+        model      = _DEFAULT_MODEL
+        rpm_limit  = int(env.get("OR_RPM", "20"))
+        rpd_raw    = env.get("OR_RPD", "200").strip().lower()
         rpd_limit  = 0 if rpd_raw in ("0", "unlimited", "none", "") else int(rpd_raw)
         system_prompt = env.get("SYSTEM_PROMPT", "")
-        # GEMINI_THINKING: HIGH / MEDIUM / LOW / NONE（デフォルト HIGH）
-        thinking_level = env.get("GEMINI_THINKING", "HIGH").strip().upper()
+        thinking_level = "NONE"  # OpenRouter は thinkingBudget 非対応
 
         accounts = []
-        for i in range(1, 10):  # KEY_1 〜 KEY_9 まで対応
-            key = env.get(f"GEMINI_KEY_{i}", "")
+        for i in range(1, 10):
+            key = env.get(f"OR_KEY_{i}", "")
             if not key or key.startswith("YOUR_"):
                 continue
-            # アカウントごとにモデル上書き可能（例: GEMINI_MODEL_2=gemma-4-26b-a4b-it）
-            acc_model = env.get(f"GEMINI_MODEL_{i}", model)
-            acc_rpm   = int(env.get(f"GEMINI_RPM_{i}", str(rpm_limit)))
-            acc_rpd_raw = env.get(f"GEMINI_RPD_{i}", rpd_raw)
+            acc_model = env.get(f"OR_MODEL_{i}", model)
+            acc_rpm   = int(env.get(f"OR_RPM_{i}", str(rpm_limit)))
+            acc_rpd_raw = env.get(f"OR_RPD_{i}", rpd_raw)
             acc_rpd   = 0 if acc_rpd_raw.strip().lower() in ("0","unlimited","none","") else int(acc_rpd_raw)
             accounts.append(AccountConfig(
                 name=f"account_{i}",
@@ -204,8 +202,8 @@ def load_config(base_dir: Optional[str] = None) -> tuple[list[AccountConfig], st
             ))
 
         if not accounts:
-            safe_print("[エラー] .env ファイルに有効な GEMINI_KEY_x が見つかりません。")
-            safe_print(f"  {env_path} を開いてAPIキーを設定してください。")
+            safe_print("[エラー] .env ファイルに有効な OR_KEY_x が見つかりません。")
+            safe_print(f"  {env_path} を開いてOR_KEY_1〜OR_KEY_3 を設定してください。")
             sys.exit(1)
 
         log.info({"event": "config_loaded", "source": ".env", "accounts": len(accounts)})
