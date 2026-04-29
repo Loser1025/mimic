@@ -261,23 +261,107 @@ def _stream_openrouter_api(account: AccountConfig, messages: list[dict],
                            system_prompt: Optional[str] = None,
                            json_mode: bool = False):
     """
-    OpenRouter API を非ストリーミングで呼び出し、Gemini ストリームと同じインタフェースで yield する。
+    OpenRouter SSE ストリーミング呼び出し（OpenAI 互換）。
 
     yields (text_chunk: str, tool_calls: list[dict], finish_reason: str)
+      - テキストチャンクはリアルタイムで yield（tool_calls=[], finish_reason=""）
+      - 最終 yield のみ tool_calls と finish_reason を設定
     """
-    response = _call_openrouter_api(account, messages, tool_specs, system_prompt, json_mode)
-    msg          = response["choices"][0]["message"]
-    text         = msg.get("content") or ""
-    raw_tcs      = msg.get("tool_calls") or []
-    tool_calls   = [
-        {
-            "name": tc["function"]["name"],
-            "args": json.loads(tc["function"].get("arguments") or "{}"),
-        }
-        for tc in raw_tcs
-    ]
-    finish_reason = response["choices"][0].get("finish_reason", "stop")
-    yield text, tool_calls, finish_reason
+    openai_messages = _to_openai_messages(messages, system_prompt)
+    payload: dict[str, Any] = {
+        "model": account.model,
+        "messages": openai_messages,
+        "stream": True,
+    }
+    if tool_specs:
+        payload["tools"] = [{"type": "function", "function": spec} for spec in tool_specs]
+        payload["tool_choice"] = "auto"
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        OR_API_BASE,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {account.api_key}",
+            "HTTP-Referer": "https://localhost",
+            "X-Title": "NEWUNI",
+        },
+        method="POST",
+    )
+
+    # ツール呼び出しを index ごとに累積（引数は文字列として連結）
+    tool_calls_acc: dict[int, dict] = {}
+    final_finish_reason = "stop"
+
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8").rstrip("\n\r")
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                if not data_str:
+                    continue
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta  = choice.get("delta", {})
+                reason = choice.get("finish_reason")
+                if reason:
+                    final_finish_reason = reason
+
+                # ── ツール呼び出しの累積 ──────────────────────────────
+                for rtc in delta.get("tool_calls") or []:
+                    idx = rtc.get("index", 0)
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {"name": "", "arguments": ""}
+                    fn = rtc.get("function", {})
+                    if fn.get("name"):
+                        tool_calls_acc[idx]["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        tool_calls_acc[idx]["arguments"] += fn["arguments"]
+
+                # ── テキストチャンクをリアルタイムで yield ────────────
+                text_chunk = delta.get("content") or ""
+                if text_chunk:
+                    yield text_chunk, [], ""
+
+        # ── 最終 yield: 完成したツール呼び出しを返す ─────────────────
+        tool_calls: list[dict] = []
+        for v in (tool_calls_acc[k] for k in sorted(tool_calls_acc)):
+            if not v.get("name"):
+                continue
+            try:
+                args = json.loads(v["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append({"name": v["name"], "args": args})
+        yield "", tool_calls, final_finish_reason
+
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")
+        try:
+            msg = json.loads(body_text).get("error", {}).get("message", body_text)
+        except Exception:
+            msg = body_text
+        if e.code == 429:
+            raise RateLimitError(e.code, msg)
+        if e.code >= 500:
+            raise ServerError(e.code, msg)
+        raise GeminiAPIError(e.code, msg)
+    except urllib.error.URLError as e:
+        raise GeminiAPIError(0, f"ネットワークエラー: {e.reason}")
 
 class AccountRotator:
     """
@@ -489,6 +573,13 @@ class GeminiAgent:
         self.json_mode: bool = False  # True のとき API に response_mime_type: application/json を指定
         self._session_rag: Optional[SessionRAG] = None  # 圧縮済み会話のRAGストア
         self._project_rag: Optional[ProjectRAG] = get_shared_project_rag(self.cwd)  # 共有RAG
+        self._pending_threads: list[threading.Thread] = []  # バックグラウンドスレッド追跡用
+
+    def wait_background_tasks(self, timeout: float = 5.0):
+        """バックグラウンドスレッド（RAGインデックス等）の完了を待つ"""
+        for t in self._pending_threads:
+            t.join(timeout=timeout)
+        self._pending_threads.clear()
 
     def set_system_prompt(self, prompt: str):
         self.system_prompt = prompt
@@ -1080,7 +1171,9 @@ class GeminiAgent:
                             self._project_rag.save(self.cwd) # 永続化
                     except Exception as _ie:
                         log.warning({"event": "project_rag_index_error", "error": str(_ie)})
-                threading.Thread(target=_bg_index, daemon=True).start()
+                _t = threading.Thread(target=_bg_index, daemon=True)
+                _t.start()
+                self._pending_threads.append(_t)
 
             except Exception as _e:
                 log.warning({"event": "project_rag_retrieve_error", "error": str(_e)})
@@ -1215,7 +1308,9 @@ class GeminiAgent:
                         safe_print(C.gray(f"  [ProjectRAG] インデックス完了: {n}チャンク"), flush=True)
                     except Exception as _ie:
                         log.warning({"event": "project_rag_index_error", "error": str(_ie)})
-                threading.Thread(target=_bg_index_stream, daemon=True).start()
+                _t = threading.Thread(target=_bg_index_stream, daemon=True)
+                _t.start()
+                self._pending_threads.append(_t)
             elif self._project_rag.chunk_count > 0:
                 p_retrieved = self._project_rag.retrieve(user_message, api_key)
                 if p_retrieved:

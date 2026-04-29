@@ -1455,6 +1455,7 @@ class InteractiveOrchestrator:
                     except Exception as _e:
                         log.warning({"event": "lesson_extract_error_react", "error": str(_e)})
 
+                self.agent.wait_background_tasks(timeout=5.0)
                 return final_text
 
             # ── アシスタント応答をメッセージ履歴に追加（functionCall 正式形式）──
@@ -1575,5 +1576,6 @@ class InteractiveOrchestrator:
         self.agent.conversation.append({"role": "user", "content": user_message})
         self.agent.conversation.extend(messages[old_conv_len + 1:])
         self.agent.conversation.append({"role": "assistant", "content": fallback})
+        self.agent.wait_background_tasks(timeout=5.0)
         return fallback
 
