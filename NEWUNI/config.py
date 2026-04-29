@@ -100,6 +100,7 @@ _EMBEDDING_MODEL    = "gemini-embedding-2-preview"
 _HYDE_MODEL         = "gemini-2.0-flash-lite"
 
 _DEFAULT_CWD: Optional[str] = None
+_GEMINI_EMBED_KEY: Optional[str] = None  # embedding 専用 Gemini キー
 
 def _parse_env_file(env_path: Path) -> dict[str, str]:
     """
@@ -170,11 +171,12 @@ def load_config(base_dir: Optional[str] = None) -> tuple[list[AccountConfig], st
         env = _parse_env_file(env_path)
 
         # モデル名グローバルを .env の値で上書き
-        global _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL, _DEFAULT_CWD
-        _DEFAULT_MODEL   = env.get("OR_NEMOTRON_MODEL", env.get("OR_MODEL", _DEFAULT_MODEL))
-        _EMBEDDING_MODEL = env.get("EMBEDDING_MODEL", _EMBEDDING_MODEL)
-        _HYDE_MODEL      = env.get("HYDE_MODEL",      _HYDE_MODEL)
-        _DEFAULT_CWD     = env.get("DEFAULT_CWD",     None) or None
+        global _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL, _DEFAULT_CWD, _GEMINI_EMBED_KEY
+        _DEFAULT_MODEL    = env.get("OR_NEMOTRON_MODEL", env.get("OR_MODEL", _DEFAULT_MODEL))
+        _EMBEDDING_MODEL  = env.get("EMBEDDING_MODEL", _EMBEDDING_MODEL)
+        _HYDE_MODEL       = env.get("HYDE_MODEL",      _HYDE_MODEL)
+        _DEFAULT_CWD      = env.get("DEFAULT_CWD",     None) or None
+        _GEMINI_EMBED_KEY = env.get("GEMINI_KEY") or None
 
         model      = _DEFAULT_MODEL
         rpm_limit  = int(env.get("OR_RPM", "20"))

@@ -21,12 +21,17 @@ from typing import Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 from NEWUNI.utils import safe_print, C, log, _try_read_file_text
 from NEWUNI.config import (AccountConfig, GEMINI_API_BASE,
-                                _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL)
+                                _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL,
+                                _GEMINI_EMBED_KEY)
 
 
 def get_embedding(text: str, api_key: str) -> list:
     """Gemini embedding API でテキストをベクトル化する（標準ライブラリのみ）"""
-    url = f"{GEMINI_API_BASE}/{_EMBEDDING_MODEL}:embedContent?key={api_key}"
+    import NEWUNI.config as _cfg
+    embed_key = _cfg._GEMINI_EMBED_KEY or api_key
+    if not embed_key or not embed_key.startswith("AIza"):
+        return []
+    url = f"{GEMINI_API_BASE}/{_EMBEDDING_MODEL}:embedContent?key={embed_key}"
     payload = json.dumps({
         "content": {"parts": [{"text": text[:30000]}]}
     }).encode("utf-8")
