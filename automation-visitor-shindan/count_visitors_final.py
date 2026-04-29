@@ -164,11 +164,14 @@ async def upload_pivot_to_sheet(csv_path, sheet_name):
         df = pd.read_csv(csv_path, encoding="shift_jis")
         df = df.fillna("")
         
-        today_str = datetime.now().strftime("%Y/%m/%d")
-        tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y/%m/%d")
+        # 日付形式をハイフン区切りに統一
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         
-        # 本日と明日のデータのみを抽出
-        df_filtered = df[df['次回対応日'].isin([today_str, tomorrow_str])]
+        # 「次回対応日」列を日付型に変換し、フォーマットを YYYY-MM-DD に統一して比較
+        # 時刻が含まれていても日付部分だけで判定されるようにする
+        df['次回対応日_clean'] = pd.to_datetime(df['次回対応日']).dt.strftime('%Y-%m-%d')
+        df_filtered = df[df['次回対応日_clean'].isin([today_str, tomorrow_str])]
         
         if df_filtered.empty:
             print("No data found for today or tomorrow.")
@@ -183,7 +186,8 @@ async def upload_pivot_to_sheet(csv_path, sheet_name):
             for day in [today_str, tomorrow_str]:
                 for hour in range(9, 22):
                     hour_str = f"{hour:02}:00"
-                    count = len(df_filtered[(df_filtered['次回対応日'] == day) & 
+                    # 日付（クリーン済み）と時間が一致する件数をカウント
+                    count = len(df_filtered[(df_filtered['次回対応日_clean'] == day) & 
                                            (df_filtered['予約時間'] == hour_str)])
                     row.append(count)
                 row.append("") # 区切り用空白列
