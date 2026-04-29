@@ -120,16 +120,16 @@ async def run_appointment_aggregation():
             await asyncio.sleep(0.7)
             await page.locator("#DateLastEnd-d").select_option(index=day_after_tomorrow.day)
             
-            search_button = page.get_by_role("button", name="検索")
+            search_button = page.get_by_role("button", name="絞込")
             if await search_button.count() == 0:
-                search_button = page.locator("button:has-text('検索')")
+                search_button = page.locator("button:has-text('絞込')")
                 
             await search_button.click()
             await page.wait_for_load_state("networkidle")
             
-            export_button = page.get_by_role("button", name="CSV書き出し")
+            export_button = page.get_by_role("button", name="CSV抽出")
             if await export_button.count() == 0:
-                export_button = page.locator("button:has-text('CSV書き出し')")
+                export_button = page.locator("button:has-text('CSV抽出')")
                 
             await export_button.click()
             async with page.expect_download() as download_info:
