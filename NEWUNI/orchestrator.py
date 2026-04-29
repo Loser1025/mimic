@@ -20,7 +20,7 @@ from NEWUNI.agent import (GeminiAgent, AccountRotator, _stream_openrouter_api as
                                _trim_messages_smart, _repair_message_sequence,
                                GeminiAPIError, RateLimitError, ServerError,
                                MAX_RETRIES, BASE_BACKOFF, MAX_BACKOFF, MAX_TOOL_ROUNDS,
-                               TOOL_OUTPUT_LIMIT, _CACHEABLE_TOOLS, _print_write_diff)
+                               MAX_PARALLEL_TOOLS, TOOL_OUTPUT_LIMIT, _CACHEABLE_TOOLS, _print_write_diff)
 from NEWUNI.tools import ToolRegistry, tools
 from NEWUNI.autogit import AutoGit, ReactLog
 from NEWUNI.rag import LongTermMemory, SessionRAG, ProjectRAG, _compress_lesson
@@ -1512,7 +1512,7 @@ class InteractiveOrchestrator:
                     self.react_log.add("observation", tool=fn_n, result=r_str[:500], step=step_count)
                     return idx, fn_n, r_str
 
-                with ThreadPoolExecutor(max_workers=len(tool_calls)) as tpool:
+                with ThreadPoolExecutor(max_workers=min(len(tool_calls), MAX_PARALLEL_TOOLS)) as tpool:
                     for idx, fn_n, r_str in tpool.map(_par_exec, enumerate(tool_calls)):
                         ordered[idx] = {"tool": fn_n, "result": r_str[:TOOL_OUTPUT_LIMIT]}
                 tool_results = ordered  # type: ignore

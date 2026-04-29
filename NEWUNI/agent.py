@@ -398,6 +398,7 @@ BASE_BACKOFF = 2.0       # 秒
 MAX_BACKOFF = 120.0      # 秒
 
 MAX_TOOL_ROUNDS = 50     # 1ターンあたりのツール呼び出し上限（RPD無制限のため拡大）
+MAX_PARALLEL_TOOLS = 3   # 並列ツール実行数の上限（コンテキスト急増防止）
 
 TOOL_OUTPUT_LIMIT = 10000   # ツール出力の文字数上限（コンテキスト肥大化抑制のため削減）
 
@@ -1123,7 +1124,7 @@ class GeminiAgent:
                 if len(tool_calls) > 1:
                     safe_print(C.orange(f"  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
                     ordered: list[Optional[dict]] = [None] * len(tool_calls)
-                    with ThreadPoolExecutor(max_workers=len(tool_calls)) as tpool:
+                    with ThreadPoolExecutor(max_workers=min(len(tool_calls), MAX_PARALLEL_TOOLS)) as tpool:
                         fmap = {
                             tpool.submit(self._run_single_tool, tc): i
                             for i, tc in enumerate(tool_calls)
@@ -1261,7 +1262,7 @@ class GeminiAgent:
                 if len(tool_calls) > 1:
                     safe_print(C.orange(f"  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
                     ordered: list[Optional[dict]] = [None] * len(tool_calls)
-                    with ThreadPoolExecutor(max_workers=len(tool_calls)) as tpool:
+                    with ThreadPoolExecutor(max_workers=min(len(tool_calls), MAX_PARALLEL_TOOLS)) as tpool:
                         fmap = {
                             tpool.submit(self._run_single_tool, tc): i
                             for i, tc in enumerate(tool_calls)
