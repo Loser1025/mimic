@@ -20,7 +20,7 @@ USER_PASS = "hirota1002"
 CSV_TEMP_PATH = r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\temp_export.csv"
 
 async def login_and_get_page(p):
-    browser = await p.chromium.launch(headless=True) 
+    browser = await p.chromium.launch(headless=False) 
     context = await browser.new_context()
     page = await context.new_page()
     await page.goto(LOGIN_URL)
