@@ -1,3 +1,4 @@
+﻿code = r'''
 import asyncio
 import os
 import pandas as pd
@@ -9,8 +10,8 @@ from google.oauth2.service_account import Credentials
 SERVICE_ACCOUNT_FILE = r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\ageless-impulse-488713-m6-03014b3cddad.json"
 SHEET_ID = "1EmVvi7TwjrTc5Mx9wZjqo8G0ZCDrULUqPiD9oeDd97Y"
 SHEET_NAMES = {
-    "extraction": "管理画面抽出",
-    "aggregation": "約束集計表"
+    "extraction": "驍ゑｽ｡騾・・蛻､鬮ｱ・｢隰夲ｽｽ陷・ｽｺ",
+    "aggregation": "驍上・謫夐ｫｮ繝ｻ・ｨ驛・ｽ｡・ｨ"
 }
 
 LOGIN_URL = "https://shindan-kh.com/management/index.php"
@@ -25,8 +26,8 @@ async def login_and_get_page(p):
     page = await context.new_page()
     await page.goto(LOGIN_URL)
     await page.get_by_role("textbox", name="ID").fill(USER_ID)
-    await page.get_by_role("textbox", name="パスワード").fill(USER_PASS)
-    await page.get_by_role("button", name="ログイン").click()
+    await page.get_by_role("textbox", name="\u30d1\u30b9\u30ef\u30fc\u30c9").fill(USER_PASS)
+    await page.get_by_role("button", name="\u30ed\u30b4\u30a4\u30b3\u30f3").click()
     await page.wait_for_load_state("networkidle")
     await page.goto(TARGET_URL)
     await page.wait_for_load_state("networkidle")
@@ -54,9 +55,9 @@ async def run_management_extraction():
             await page.locator("#DateLastEnd-m").select_option(index=tomorrow.month)
             await asyncio.sleep(0.7)
             await page.locator("#DateLastEnd-d").select_option(index=tomorrow.day)
-            await page.get_by_role("button", name="検索").click()
+            await page.get_by_role("button", name="\u691c\u7d22").click()
             await page.wait_for_load_state("networkidle")
-            await page.get_by_role("button", name="CSV抽出").click()
+            await page.get_by_role("button", name="CSV\u63d8\u51fa").click()
             async with page.expect_download() as download_info:
                 await asyncio.sleep(1) 
             download = await download_info.value
@@ -83,7 +84,7 @@ async def run_appointment_aggregation():
     async with async_playwright() as p:
         browser, page = await login_and_get_page(p)
         try:
-            await page.locator("#status_chu").select_option(label="予約電話")
+            await page.locator("#status_chu").select_option(label="\u4e88\u7d0a\u9B54\u8a71")
             today = datetime.now()
             day_after_tomorrow = today + timedelta(days=2)
             await page.locator("#DateLastStart-y").select_option(value=str(today.year))
@@ -97,10 +98,10 @@ async def run_appointment_aggregation():
             await page.locator("#DateLastEnd-m").select_option(index=day_after_tomorrow.month)
             await asyncio.sleep(0.7)
             await page.locator("#DateLastEnd-d").select_option(index=day_after_tomorrow.day)
-            await page.get_by_role("button", name="検索").click()
+            await page.get_by_role("button", name="\u691c\u7d22").click()
             await page.wait_for_load_state("networkidle")
             async with page.expect_download() as download_info:
-                await page.get_by_role("button", name="CSV抽出").click()
+                await page.get_by_role("button", name="CSV\u63d8\u51fa").click()
             download = await download_info.value
             await download.save_as(CSV_TEMP_PATH)
             await upload_pivot_to_sheet(SHEET_NAMES["aggregation"])
@@ -111,11 +112,8 @@ async def upload_pivot_to_sheet(sheet_name):
     try:
         df = pd.read_csv(CSV_TEMP_PATH, encoding="shift_jis")
         df = df.fillna("")
-        col_date = '次回対応日' 
-        col_person = '本人確認状況'
-        if col_date not in df.columns:
-            df.columns.values[0] = col_date
-            df.columns.values[1] = col_person
+        col_date = '隹ｺ・｡陜玲ｧｫ・ｯ・ｾ陟｢諛亥ｾ・ 
+        col_person = '隴幢ｽｬ闔・ｺ驕抵ｽｺ髫ｱ蜥ｲ諞ｾ雎輔・'
         df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
         today_date = datetime.now().date()
         tomorrow_date = today_date + timedelta(days=1)
@@ -162,3 +160,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+'''
+with open(r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\count_visitors_final.py", "w", encoding="utf-8") as f:
+    f.write(code)
