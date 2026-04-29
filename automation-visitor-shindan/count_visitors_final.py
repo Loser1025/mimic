@@ -54,14 +54,33 @@ async def run_management_extraction():
             await page.locator("#DateLastEnd-m").select_option(index=tomorrow.month)
             await asyncio.sleep(0.7)
             await page.locator("#DateLastEnd-d").select_option(index=tomorrow.day)
-            await page.get_by_role("button", name="検索").click()
+            
+            # Try multiple selectors for the search button
+            search_button = page.get_by_role("button", name="検索")
+            if await search_button.count() == 0:
+                # Fallback: search for button containing "検索"
+                search_button = page.locator("button:has-text('検索')")
+            
+            await search_button.click()
             await page.wait_for_load_state("networkidle")
-            await page.get_by_role("button", name="CSV抽出").click()
+            
+            export_button = page.get_by_role("button", name="CSV書き出し")
+            if await export_button.count() == 0:
+                export_button = page.locator("button:has-text('CSV書き出し')")
+                
+            await export_button.click()
             async with page.expect_download() as download_info:
                 await asyncio.sleep(1) 
             download = await download_info.value
             await download.save_as(CSV_TEMP_PATH)
             await upload_raw_data_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["extraction"])
+        except Exception as e:
+            print(f"Error in run_management_extraction: {e}")
+            await page.screenshot(path=r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\error_extraction.png")
+            # Print all buttons to help debug
+            buttons = await page.locator("button").all_inner_texts()
+            print(f"Available buttons: {buttons}")
+            raise e
         finally:
             await browser.close()
 
@@ -77,13 +96,16 @@ async def upload_raw_data_to_sheet(csv_path, sheet_name):
         data_str = [[str(cell) for cell in row] for row in data]
         worksheet.update('A1', data_str, value_input_option="USER_ENTERED")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in upload_raw_data_to_sheet: {e}")
 
 async def run_appointment_aggregation():
     async with async_playwright() as p:
         browser, page = await login_and_get_page(p)
         try:
-            await page.locator("#status_chu").select_option(label="予約電話")
+            # Corrected mojibake for "予約電話"
+            status_dropdown = page.locator("#status_chu")
+            await status_dropdown.select_option(label="予約電話")
+            
             today = datetime.now()
             day_after_tomorrow = today + timedelta(days=2)
             await page.locator("#DateLastStart-y").select_option(value=str(today.year))
@@ -97,68 +119,91 @@ async def run_appointment_aggregation():
             await page.locator("#DateLastEnd-m").select_option(index=day_after_tomorrow.month)
             await asyncio.sleep(0.7)
             await page.locator("#DateLastEnd-d").select_option(index=day_after_tomorrow.day)
-            await page.get_by_role("button", name="検索").click()
+            
+            search_button = page.get_by_role("button", name="検索")
+            if await search_button.count() == 0:
+                search_button = page.locator("button:has-text('検索')")
+                
+            await search_button.click()
             await page.wait_for_load_state("networkidle")
+            
+            export_button = page.get_by_role("button", name="CSV書き出し")
+            if await export_button.count() == 0:
+                export_button = page.locator("button:has-text('CSV書き出し')")
+                
+            await export_button.click()
             async with page.expect_download() as download_info:
-                await page.get_by_role("button", name="CSV抽出").click()
+                await asyncio.sleep(1) 
             download = await download_info.value
             await download.save_as(CSV_TEMP_PATH)
-            await upload_pivot_to_sheet(SHEET_NAMES["aggregation"])
+            await upload_pivot_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["aggregation"])
+        except Exception as e:
+            print(f"Error in run_appointment_aggregation: {e}")
+            await page.screenshot(path=r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\error_aggregation.png")
+            buttons = await page.locator("button").all_inner_texts()
+            print(f"Available buttons: {buttons}")
+            raise e
         finally:
             await browser.close()
 
-async def upload_pivot_to_sheet(sheet_name):
+async def upload_pivot_to_sheet(csv_path, sheet_name):
     try:
-        df = pd.read_csv(CSV_TEMP_PATH, encoding="shift_jis")
-        df = df.fillna("")
-        col_date = '次回対応日' 
-        col_person = '本人確認状況'
-        if col_date not in df.columns:
-            df.columns.values[0] = col_date
-            df.columns.values[1] = col_person
-        df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
-        today_date = datetime.now().date()
-        tomorrow_date = today_date + timedelta(days=1)
-        df_target = df[df[col_date].dt.date.isin([today_date, tomorrow_date])].copy()
-        if df_target.empty:
-            return
-        def create_pivot(target_date):
-            df_date = df_target[df_target[col_date].dt.date == target_date].copy()
-            start_time = datetime.combine(target_date, datetime.min.time()).replace(hour=9)
-            end_time = datetime.combine(target_date, datetime.min.time()).replace(hour=21)
-            all_hours = pd.date_range(start=start_time, end=end_time, freq='h')
-            if df_date.empty:
-                return pd.DataFrame(0, index=df_target[col_person].unique(), columns=all_hours)
-            df_date['hour'] = df_date[col_date].dt.floor('h')
-            pivot = df_date.pivot_table(index=col_person, columns='hour', values=col_date, aggfunc='count', fill_value=0)
-            return pivot.reindex(columns=all_hours, fill_value=0)
-        pivot_today = create_pivot(today_date)
-        pivot_tomorrow = create_pivot(tomorrow_date)
-        all_indices = pivot_today.index.union(pivot_tomorrow.index)
-        pivot_today = pivot_today.reindex(all_indices, fill_value=0)
-        pivot_tomorrow = pivot_tomorrow.reindex(all_indices, fill_value=0)
-        today_hours = pd.date_range(start=datetime.combine(today_date, datetime.min.time()).replace(hour=9), 
-                                    end=datetime.combine(today_date, datetime.min.time()).replace(hour=21), freq='h')
-        tomorrow_hours = pd.date_range(start=datetime.combine(tomorrow_date, datetime.min.time()).replace(hour=9), 
-                                       end=datetime.combine(tomorrow_date, datetime.min.time()).replace(hour=21), freq='h')
-        headers = [col_person] + [h.strftime('%Y/%m/%d %H:%M') for h in today_hours] + [''] + [h.strftime('%Y/%m/%d %H:%M') for h in tomorrow_hours]
-        data_to_append = []
-        for idx in all_indices:
-            row = [idx] + pivot_today.loc[idx].tolist() + [''] + pivot_tomorrow.loc[idx].tolist()
-            data_to_append.append(row)
         gc = get_gspread_client()
         sh = gc.open_by_key(SHEET_ID)
         worksheet = sh.worksheet(sheet_name)
-        worksheet.append_rows([headers] + data_to_append, value_input_option="USER_ENTERED")
+        
+        df = pd.read_csv(csv_path, encoding="shift_jis")
+        df = df.fillna("")
+        
+        today_str = datetime.now().strftime("%Y/%m/%d")
+        tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y/%m/%d")
+        
+        # Filter for today and tomorrow
+        df_filtered = df[df['次回対応日'].isin([today_str, tomorrow_str])]
+        
+        if df_filtered.empty:
+            print("No data found for today or tomorrow.")
+            return
+            
+        # Process the pivot data
+        pivot_data = []
+        
+        # Get unique people (person identified by '本人確認状況' or similar)
+        people = df_filtered['本人確認状況'].unique()
+        
+        for person in people:
+            row = [person]
+            for day in [today_str, tomorrow_str]:
+                for hour in range(9, 22):
+                    hour_str = f"{hour:02}:00"
+                    count = len(df_filtered[(df_filtered['次回対応日'] == day) & 
+                                           (df_filtered['予約時間'] == hour_str)])
+                    row.append(count)
+                row.append("") # Separator
+            pivot_data.append(row)
+        
+        # Create headers
+        headers = ["担当者"]
+        for day in [today_str, tomorrow_str]:
+            for hour in range(9, 22):
+                headers.append(f"{day} {hour:02}:00")
+            headers.append("") # Separator
+            
+        final_data = [headers] + pivot_data
+        data_str = [[str(cell) for cell in row] for row in final_data]
+        worksheet.append_rows(data_str, value_input_option="USER_ENTERED")
+        
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in upload_pivot_to_sheet: {e}")
 
 async def main():
     try:
         await run_management_extraction()
+        print("Management extraction completed successfully.")
         await run_appointment_aggregation()
+        print("Appointment aggregation completed successfully.")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Main process failed: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
