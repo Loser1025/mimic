@@ -219,6 +219,7 @@ PLANNER_SYSTEM_PROMPT = """\
 POWERSHELL_EXECUTOR_GUIDANCE = """\
 
 [PowerShell実行ガイドライン（必須遵守）]
+- **PowerShellコマンドは必ず自分で run_powershell ツールを使って実行すること。ユーザーに「実行してください」と依頼してはならない。**
 - run_powershell を呼ぶときは working_directory に現在の作業フォルダのフルパスを必ず指定する。
 - コマンド結果の先頭が [SUCCESS] なら成功、[FAILURE...] なら失敗。FAILUREは必ずリトライまたは代替手段を取ること。
 - ファイルパスはバックスラッシュ（\\）またはJoin-Pathを使うこと。スラッシュは予期しない動作を起こす場合がある。
@@ -228,8 +229,9 @@ POWERSHELL_EXECUTOR_GUIDANCE = """\
 - 変数は同一コマンド内でのみ有効。ステップをまたぐ場合はファイルやレジストリ経由で値を渡す。
 
 [ツール出力の制限（必須遵守）]
-- すべてのツール出力は8000文字を超えると自動的にAIで要約される。要約により詳細情報が失われる可能性がある。
-- ファイル読み取りは read_file の offset/limit で8000文字以内に分割して読むこと。
+- すべてのツール出力は8000文字を超えると自動的にメモリにキャッシュされ、先頭8000文字と cache_key が返される。
+- 続きを読む場合は read_tool_cache(cache_key="...", offset=8000) を呼び出す。
+- ファイル読み取りは read_file の offset で8000文字ずつ分割して読むこと。
 """
 
 REVIEWER_SYSTEM_PROMPT = """\
@@ -353,7 +355,7 @@ Thought: get_repo_map を実行して構造を確認します。
 3. 次のアクションが「依頼範囲外の改善」だけか？ → Yes なら終了
 
 ## 利用可能なツール一覧（参考）
-read_file, write_file, edit_file, patch_file, append_file,
+read_file, read_tool_cache, write_file, edit_file, patch_file, append_file,
 create_directory, move_file, copy_file, delete_file,
 list_directory, glob, search_files, get_repo_map,
 run_powershell, web_search, fetch_webpage
