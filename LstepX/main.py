@@ -19,7 +19,7 @@ from upload_to_sheets import upload_to_google_sheets
 CONFIG = {
     "USER_ID": "kogawa_flka",
     "PASSWORD": "kogawa0930",
-    "DOWNLOAD_DIR": r"C:\Users\Loser\Desktop\-\-\LstepX\downloads",
+    "DOWNLOAD_DIR": r"C:\Users\Loser\Desktop\-\tamalabo\LstepX\downloads",
     "LOGIN_URL": "https://manager.linestep.net/",
     "SPREADSHEET_ID": "1EmVvi7TwjrTc5Mx9wZjqo8G0ZCDrULUqPiD9oeDd97Y",
     "TARGET_SHEET": "登録数",

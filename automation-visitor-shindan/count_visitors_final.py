@@ -1,5 +1,6 @@
 import asyncio
 import os
+import traceback
 import pandas as pd
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
@@ -7,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- 設定定数 ---
-SERVICE_ACCOUNT_FILE = r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\ageless-impulse-488713-m6-03014b3cddad.json"
+SERVICE_ACCOUNT_FILE = r"C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\ageless-impulse-488713-m6-03014b3cddad.json"
 SHEET_ID = "1EmVvi7TwjrTc5Mx9wZjqo8G0ZCDrULUqPiD9oeDd97Y"
 SHEET_NAMES = {
     "extraction": "管理画面抽出",
@@ -18,12 +19,12 @@ LOGIN_URL = "https://shindan-kh.com/management/index.php"
 TARGET_URL = "https://shindan-kh.com/management/visitor01.php"
 USER_ID = "hirota.t"
 USER_PASS = "hirota1002"
-CSV_TEMP_PATH = r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\temp_export.csv"
+CSV_TEMP_PATH = r"C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\temp_export.csv"
 
 # --- 共通関数 ---
 async def login_and_get_page(p):
     """ログインしてターゲットページに遷移する"""
-    browser = await p.chromium.launch(headless=False) 
+    browser = await p.chromium.launch(headless=True) 
     context = await browser.new_context()
     page = await context.new_page()
     await page.goto(LOGIN_URL)
@@ -74,20 +75,18 @@ async def run_management_extraction():
             export_button = page.get_by_role("button", name="CSV抽出")
             if await export_button.count() == 0:
                 export_button = page.locator("button:has-text('CSV抽出')")
-            await export_button.click()
-            
             async with page.expect_download() as download_info:
-                await asyncio.sleep(1) 
+                await export_button.click()
             download = await download_info.value
             await download.save_as(CSV_TEMP_PATH)
-            
+
             # スプレッドシートへアップロード
             await upload_raw_data_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["extraction"])
             print("Management extraction completed successfully.")
             
         except Exception as e:
             print(f"Error in run_management_extraction: {e}")
-            await page.screenshot(path=r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\error_extraction.png")
+            await page.screenshot(path=r"C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\error_extraction.png")
             buttons = await page.locator("button").all_inner_texts()
             print(f"Available buttons: {buttons}")
             raise e
@@ -110,8 +109,11 @@ async def upload_raw_data_to_sheet(csv_path, sheet_name):
         data_str = [[str(cell) for cell in row] for row in data]
         
         worksheet.update(range_name='A1', values=data_str, value_input_option="USER_ENTERED")
+        print(f"upload_raw_data_to_sheet: {len(data_str)} 行書き込み完了")
     except Exception as e:
         print(f"Error in upload_raw_data_to_sheet: {e}")
+        traceback.print_exc()
+        raise
 
 # --- メイン処理2: 約束集計 ---
 async def run_appointment_aggregation():
@@ -134,20 +136,18 @@ async def run_appointment_aggregation():
             export_button = page.get_by_role("button", name="CSV抽出")
             if await export_button.count() == 0:
                 export_button = page.locator("button:has-text('CSV抽出')")
-            await export_button.click()
-            
             async with page.expect_download() as download_info:
-                await asyncio.sleep(1) 
+                await export_button.click()
             download = await download_info.value
             await download.save_as(CSV_TEMP_PATH)
-            
+
             # ピボット集計してアップロード
             await upload_pivot_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["aggregation"])
             print("Appointment aggregation completed successfully.")
             
         except Exception as e:
             print(f"Error in run_appointment_aggregation: {e}")
-            await page.screenshot(path=r"C:\Users\Loser\Desktop\-\-\automation-visitor-shindan\error_aggregation.png")
+            await page.screenshot(path=r"C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\error_aggregation.png")
             buttons = await page.locator("button").all_inner_texts()
             print(f"Available buttons: {buttons}")
             raise e
@@ -208,19 +208,31 @@ async def upload_pivot_to_sheet(csv_path, sheet_name):
         data_str = [[str(cell) for cell in row] for row in final_data]
         
         worksheet.append_rows(data_str, value_input_option="USER_ENTERED")
-        
+        print(f"upload_pivot_to_sheet: {len(data_str)} 行追記完了")
     except Exception as e:
         print(f"Error in upload_pivot_to_sheet: {e}")
+        traceback.print_exc()
+        raise
+
+LOG_PATH = r"C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\run_log.txt"
 
 async def main():
     """メイン実行フロー"""
+    import sys
+    log_file = open(LOG_PATH, "w", encoding="utf-8")
+    sys.stdout = log_file
+    sys.stderr = log_file
     try:
-        # 1. 管理画面抽出 (当日〜翌日 / 上書き)
+        print(f"=== 実行開始: {datetime.now()} ===")
         await run_management_extraction()
-        # 2. 約束集計 (予約電話全件抽出し本日・翌日分を集計 / 追記)
         await run_appointment_aggregation()
+        print(f"=== 全処理完了: {datetime.now()} ===")
     except Exception as e:
         print(f"Main process failed: {e}")
+        traceback.print_exc()
+    finally:
+        log_file.flush()
+        log_file.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
