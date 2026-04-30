@@ -24,6 +24,12 @@ from NEWUNI.config import (AccountConfig, GEMINI_API_BASE,
                                 _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL,
                                 _GEMINI_EMBED_KEY)
 
+# リランキング用サーキットブレーカー
+_rerank_failure_count: int = 0
+_rerank_cooldown_until: float = 0.0
+_RERANK_COOLDOWN_SEC: float = 60.0
+_RERANK_FAIL_THRESHOLD: int = 3
+
 
 def get_embedding(text: str, api_key: str) -> list:
     """Gemini embedding API でテキストをベクトル化する（標準ライブラリのみ）"""
@@ -208,18 +214,20 @@ def _hyde_generate(query: str, api_key: str, timeout: int = 8) -> str:
 
 def _rerank_generate(query: str, documents: list[tuple], api_key: str, timeout: int = 10) -> list[Any]:
     """
-    LLMを用いたリランキング:
-    上位候補ドキュメントをクエリに基づいて再評価し、関連度の高い順に並べ替えて返す。
+    LLMを用いたリランキング。
     documents: [(score, item), ...]
     Returns: [item, ...] 関連度順にソートされたアイテムのリスト
     """
+    global _rerank_failure_count, _rerank_cooldown_until
+
     if not documents:
         return []
-    
-    # 上位10件をリランキング対象とする
+
+    if time.monotonic() < _rerank_cooldown_until:
+        return [item for _, item in documents[:5]]
+
     candidates = documents[:10]
-    
-    # アイテムからテキストを抽出（文字列ならそのまま、辞書なら'lesson'や'content'を優先）
+
     def extract_text(item):
         if isinstance(item, str): return item
         if isinstance(item, dict):
@@ -227,8 +235,6 @@ def _rerank_generate(query: str, documents: list[tuple], api_key: str, timeout: 
         return str(item)
 
     doc_texts = [extract_text(item) for _, item in candidates]
-    
-    # リランキング用プロンプトの構築
     formatted_docs = "\n".join([f"[{i}] {text[:500]}" for i, text in enumerate(doc_texts)])
     prompt = (
         f"クエリ: {query}\n\n"
@@ -236,43 +242,56 @@ def _rerank_generate(query: str, documents: list[tuple], api_key: str, timeout: 
         f"出力は必ず JSON 形式で、スコアのリストのみを返してください。例: [8, 2, 10, 5, ...]\n\n"
         f"{formatted_docs}"
     )
-    
-    try:
-        url = f"{GEMINI_API_BASE}/{_HYDE_MODEL}:generateContent?key={api_key}"
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt,}]}],
-            "generationConfig": {"response_mime_type": "application/json", "temperature": 0.0},
-        }
-        data = json.dumps(payload).encode()
+
+    url = f"{GEMINI_API_BASE}/{_HYDE_MODEL}:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"response_mime_type": "application/json", "temperature": 0.0},
+    }
+    data = json.dumps(payload).encode()
+
+    max_retries = 3
+    base_backoff = 4.0
+    for attempt in range(max_retries):
         req = urllib.request.Request(url, data=data,
                                      headers={"Content-Type": "application/json"},
                                      method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            result = json.loads(resp.read())
-        
-        # JSONとしてスコアリストを抽出
-        res_text = (result.get("candidates", [{}])[0]
-                    .get("content", {}).get("parts", [{}])[0].get("text", "[]"))
-        scores = json.loads(res_text)
-        
-        if not isinstance(scores, list) or len(scores) != len(candidates):
-            return [item for _, item in candidates[:5]] # フォールバック
-            
-        # スコアに基づいてソート
-        reranked = []
-        for i, score in enumerate(scores):
-            reranked.append((float(score), candidates[i][1]))
-            
-        reranked.sort(key=lambda x: x[0], reverse=True)
-        
-        return [item for _, item in reranked[:5]]
-        
-    except Exception as e:
-        log.warning({"event": "rerank_error", "error": str(e)})
-        return [item for _, item in candidates[:5]]
-        return documents[:5] # エラー時は単純に上位5件を返す
-    except Exception:
-        return ""
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                result = json.loads(resp.read())
+
+            res_text = (result.get("candidates", [{}])[0]
+                        .get("content", {}).get("parts", [{}])[0].get("text", "[]"))
+            scores = json.loads(res_text)
+
+            if not isinstance(scores, list) or len(scores) != len(candidates):
+                return [item for _, item in candidates[:5]]
+
+            reranked = [(float(score), candidates[i][1]) for i, score in enumerate(scores)]
+            reranked.sort(key=lambda x: x[0], reverse=True)
+
+            _rerank_failure_count = 0
+            return [item for _, item in reranked[:5]]
+
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < max_retries - 1:
+                wait_time = base_backoff * (2 ** attempt)
+                log.info({"event": "rerank_429_wait", "attempt": attempt + 1, "wait": wait_time})
+                time.sleep(wait_time)
+                continue
+            _rerank_failure_count += 1
+            if _rerank_failure_count >= _RERANK_FAIL_THRESHOLD:
+                _rerank_cooldown_until = time.monotonic() + _RERANK_COOLDOWN_SEC
+                log.warning({"event": "rerank_circuit_open",
+                             "cooldown_sec": _RERANK_COOLDOWN_SEC,
+                             "fail_count": _rerank_failure_count})
+            log.warning({"event": "rerank_error", "error": str(e)})
+            break
+        except Exception as e:
+            log.warning({"event": "rerank_error", "error": str(e)})
+            break
+
+    return [item for _, item in candidates[:5]]
 
 _SW_CHUNK_CHARS = 300    # スライディングウィンドウのチャンクサイズ（文字数）
 

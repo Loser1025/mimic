@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Any
 from dataclasses import dataclass, field
-from NEWUNI.utils import safe_print, C, log, TokenBucket
+from NEWUNI.utils import safe_print, C, log, TokenBucket, cache_tool_output
 from NEWUNI.config import (AccountConfig, PortContext, build_port_context, render_port_context,
                                 OR_API_BASE)
 import NEWUNI.config as _agent_cfg
@@ -437,7 +437,6 @@ MAX_BACKOFF = 120.0      # 秒
 MAX_TOOL_ROUNDS = 50
 MAX_PARALLEL_TOOLS = 3     # 1ターンあたりのツール呼び出し上限（RPD無制限のため拡大）
 
-TOOL_OUTPUT_LIMIT = 10000   # ツール出力の文字数上限（コンテキスト肥大化抑制のため削減）
 
 _CACHEABLE_TOOLS = frozenset({"read_file", "list_directory", "glob", "grep", "fetch_webpage"})
 
@@ -954,42 +953,6 @@ class GeminiAgent:
         except (KeyError, IndexError):
             return "stop"
 
-    def _summarize_if_long(self, tool_name: str, result_str: str) -> str:
-        """
-        TOOL_OUTPUT_LIMIT を超えたツール出力を軽量モデルで要約して返す。
-        要約失敗時は先頭 TOOL_OUTPUT_LIMIT 文字にフォールバック。
-        """
-        if len(result_str) <= TOOL_OUTPUT_LIMIT:
-            return result_str
-        safe_print(C.gray(
-            f"  [要約] {tool_name} の出力が長いため要約します "
-            f"({len(result_str):,}文字 → 上限{TOOL_OUTPUT_LIMIT:,}文字)..."
-        ), flush=True)
-        summary_messages = [{
-            "role": "user",
-            "content": (
-                f"以下はツール「{tool_name}」の実行結果です。"
-                f"重要な情報をすべて保持しつつ3000文字以内で要約してください。\n\n"
-                f"{result_str[:50000]}"
-            ),
-        }]
-        prev_thinking = self.thinking_enabled
-        self.thinking_enabled = False
-        try:
-            response = self._api_call_with_retry(summary_messages, override_tool_specs=[])
-            summary = self._extract_text(response)
-            if not summary:
-                raise ValueError("空の要約レスポンス")
-            log.info({"event": "tool_summarized", "tool": tool_name,
-                      "original": len(result_str), "summary": len(summary)})
-            return summary
-        except Exception as e:
-            log.warning({"event": "summarize_failed", "tool": tool_name, "error": str(e)})
-            safe_print(C.yellow(f"  [要約失敗] 先頭{TOOL_OUTPUT_LIMIT:,}文字にフォールバック"), flush=True)
-            return result_str[:TOOL_OUTPUT_LIMIT]
-        finally:
-            self.thinking_enabled = prev_thinking
-
     def _make_cache_key(self, fn_name: str, fn_args: dict) -> str:
         return f"{fn_name}:{json.dumps(fn_args, sort_keys=True, ensure_ascii=False)}"
 
@@ -1041,7 +1004,7 @@ class GeminiAgent:
 
         try:
             result = self.tools.execute(fn_name, fn_args)
-            result_str = self._summarize_if_long(fn_name, str(result))
+            result_str = cache_tool_output(fn_name, str(result))
         except Exception as e:
             result_str = f"ツール実行エラー: {fn_name}: {e}"
             log.error({"event": "tool_error", "tool": fn_name, "error": str(e)})
@@ -1184,13 +1147,13 @@ class GeminiAgent:
                                            "tool": fn_name, "error": str(e)})
                             ordered[idx] = {
                                 "tool": fn_name,
-                                "result": result_str[:TOOL_OUTPUT_LIMIT],
+                                "result": result_str,
                             }
                     tool_results = [r for r in ordered if r is not None]
                 else:
                     fn_name, result_str = self._run_single_tool(tool_calls[0])
                     tool_results = [{"tool": fn_name,
-                                     "result": result_str[:TOOL_OUTPUT_LIMIT]}]
+                                     "result": result_str}]
 
                 # ツール結果を functionResponse 正式形式でメッセージに追加
                 messages.append({
@@ -1324,13 +1287,13 @@ class GeminiAgent:
                                            "tool": fn_name, "error": str(e)})
                             ordered[idx] = {
                                 "tool": fn_name,
-                                "result": result_str[:TOOL_OUTPUT_LIMIT],
+                                "result": result_str,
                             }
                     tool_results = [r for r in ordered if r is not None]
                 else:
                     fn_name, result_str = self._run_single_tool(tool_calls[0])
                     tool_results = [{"tool": fn_name,
-                                     "result": result_str[:TOOL_OUTPUT_LIMIT]}]
+                                     "result": result_str}]
 
                 messages.append({
                     "role": "user",

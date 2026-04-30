@@ -43,7 +43,7 @@ try:
     from playwright.sync_api import sync_playwright
 except ImportError:
     sync_playwright = None  # type: ignore
-from NEWUNI.utils import safe_print, C, log, _try_read_file_text
+from NEWUNI.utils import safe_print, C, log, _try_read_file_text, cache_tool_output, _tool_output_cache, _TOOL_CHUNK_SIZE
 from NEWUNI.config import AccountConfig
 
 # ── 精度改善用レジストリ ──────────────────────────────────────────
@@ -177,6 +177,44 @@ class ToolRegistry:
 tools = ToolRegistry()
 
 _READ_FILE_CHAR_CHUNK = 8000  # 出力要約の上限に合わせた文字数チャンクサイズ
+
+@tools.register(
+    name="read_tool_cache",
+    description=(
+        "ツール出力が長くてキャッシュされた場合に続きを読む。"
+        "cache_tool_output が返したフッターに書かれた cache_key と offset を指定する。"
+        "例: read_tool_cache(cache_key=\"run_powershell_001\", offset=8000)"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "cache_key": {"type": "string", "description": "キャッシュキー（ツール出力のフッターに記載）"},
+            "offset":    {"type": "integer", "description": "読み取り開始文字位置", "default": 0}
+        },
+        "required": ["cache_key"]
+    }
+)
+def read_tool_cache(cache_key: str, offset: int = 0) -> str:
+    result = _tool_output_cache.get(cache_key)
+    if result is None:
+        return f"エラー: cache_key '{cache_key}' が見つかりません。利用可能なキー: {list(_tool_output_cache.keys())}"
+
+    total = len(result)
+    sliced = result[offset: offset + _TOOL_CHUNK_SIZE]
+    end = offset + len(sliced)
+    remaining = total - end
+
+    header = f"[{cache_key}  文字 {offset}–{end} / 全{total}文字]\n{'─' * 60}\n"
+    if remaining > 0:
+        footer = (
+            f"\n{'─' * 60}\n"
+            f"⚠ 残り {remaining} 文字\n"
+            f"  続きを読む: read_tool_cache(cache_key=\"{cache_key}\", offset={end})\n"
+            f"{'─' * 60}"
+        )
+    else:
+        footer = f"\n{'─' * 60}\n  ✓ 末尾まで読み込み完了\n{'─' * 60}"
+    return header + sliced + footer
 
 @tools.register(
     name="read_file",

@@ -14,13 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any
 from dataclasses import dataclass, field
-from NEWUNI.utils import safe_print, C, log, PipelineTypewriter
+from NEWUNI.utils import safe_print, C, log, PipelineTypewriter, cache_tool_output
 from NEWUNI.config import PortContext, build_port_context, render_port_context
 from NEWUNI.agent import (GeminiAgent, AccountRotator, _stream_openrouter_api as _stream_gemini_api,
                                _trim_messages_smart, _repair_message_sequence,
                                GeminiAPIError, RateLimitError, ServerError,
                                MAX_RETRIES, BASE_BACKOFF, MAX_BACKOFF, MAX_TOOL_ROUNDS,
-                               MAX_PARALLEL_TOOLS, TOOL_OUTPUT_LIMIT, _CACHEABLE_TOOLS, _print_write_diff)
+                               MAX_PARALLEL_TOOLS, _CACHEABLE_TOOLS, _print_write_diff)
 from NEWUNI.tools import ToolRegistry, tools
 from NEWUNI.autogit import AutoGit, ReactLog
 from NEWUNI.rag import LongTermMemory, SessionRAG, ProjectRAG, _compress_lesson
@@ -1304,7 +1304,7 @@ class InteractiveOrchestrator:
         try:
             result = self.agent.tools.execute(fn_name, fn_args)
             error_counts[fn_name] = 0
-            result_str = self.agent._summarize_if_long(fn_name, str(result))
+            result_str = cache_tool_output(fn_name, str(result))
             # キャッシュ登録 / 書き込み後の無効化
             if fn_name in _CACHEABLE_TOOLS:
                 self.agent._tool_cache[cache_key] = result_str  # type: ignore[possibly-undefined]
@@ -1500,7 +1500,7 @@ class InteractiveOrchestrator:
                             return idx, fn_n, r_str
                     try:
                         r = self.agent.tools.execute(fn_n, fn_a)
-                        r_str = self.agent._summarize_if_long(fn_n, str(r))
+                        r_str = cache_tool_output(fn_n, str(r))
                         if fn_n in _CACHEABLE_TOOLS:
                             self.agent._tool_cache[ck] = r_str  # type: ignore[possibly-undefined]
                     except Exception as e:
@@ -1515,7 +1515,7 @@ class InteractiveOrchestrator:
 
                 with ThreadPoolExecutor(max_workers=min(len(tool_calls), MAX_PARALLEL_TOOLS)) as tpool:
                     for idx, fn_n, r_str in tpool.map(_par_exec, enumerate(tool_calls)):
-                        ordered[idx] = {"tool": fn_n, "result": r_str[:TOOL_OUTPUT_LIMIT]}
+                        ordered[idx] = {"tool": fn_n, "result": r_str}
                 tool_results = ordered  # type: ignore
             else:
                 # ── 逐次実行（書き込み系を含む場合・単一ツール）──────
@@ -1557,7 +1557,7 @@ class InteractiveOrchestrator:
                     )
                     tool_results.append({
                         "tool":   fn_name,
-                        "result": result_str[:TOOL_OUTPUT_LIMIT],
+                        "result": result_str,
                     })
 
             # ── Observation を functionResponse 形式でメッセージに追加 ───

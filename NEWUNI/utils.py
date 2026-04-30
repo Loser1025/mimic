@@ -432,3 +432,35 @@ class PipelineTypewriter:
             self._thread.join(timeout=60)
         return full
 
+
+# ── ツール出力メモリキャッシュ ─────────────────────────────────────
+_tool_output_cache: dict[str, str] = {}
+_tool_cache_counter: int = 0
+_TOOL_CHUNK_SIZE: int = 8000
+_TOOL_CACHE_MAX_ENTRIES: int = 50
+_tool_cache_lock = threading.Lock()
+
+def cache_tool_output(tool_name: str, result: str) -> str:
+    global _tool_cache_counter
+    if len(result) <= _TOOL_CHUNK_SIZE:
+        return result
+
+    with _tool_cache_lock:
+        _tool_cache_counter += 1
+        cache_key = f"{tool_name}_{_tool_cache_counter:03d}"
+        _tool_output_cache[cache_key] = result
+        while len(_tool_output_cache) > _TOOL_CACHE_MAX_ENTRIES:
+            del _tool_output_cache[next(iter(_tool_output_cache))]
+
+    total = len(result)
+    sliced = result[:_TOOL_CHUNK_SIZE]
+    remaining = total - _TOOL_CHUNK_SIZE
+
+    header = f"[{tool_name} の出力  文字 0–{_TOOL_CHUNK_SIZE} / 全{total}文字  cache_key=\"{cache_key}\"]\n{'─' * 60}\n"
+    footer = (
+        f"\n{'─' * 60}\n"
+        f"⚠ 残り {remaining} 文字\n"
+        f"  続きを読む: read_tool_cache(cache_key=\"{cache_key}\", offset={_TOOL_CHUNK_SIZE})\n"
+        f"{'─' * 60}"
+    )
+    return header + sliced + footer
