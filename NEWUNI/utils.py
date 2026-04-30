@@ -441,6 +441,11 @@ _TOOL_CACHE_MAX_ENTRIES: int = 50
 _tool_cache_lock = threading.Lock()
 
 def cache_tool_output(tool_name: str, result: str) -> str:
+    """
+    ツール出力が _TOOL_CHUNK_SIZE を超える場合はメモリにキャッシュし、
+    先頭チャンクと続きの読み方を返す。
+    超えない場合はそのまま返す。
+    """
     global _tool_cache_counter
     if len(result) <= _TOOL_CHUNK_SIZE:
         return result

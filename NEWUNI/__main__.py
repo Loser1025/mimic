@@ -1,5 +1,6 @@
 """NEWUNI エントリポイント — python -m NEWUNI で起動。"""
 from __future__ import annotations
+import os
 import sys
 import io
 import logging
@@ -50,7 +51,11 @@ def main():
     orchestrator = AgentOrchestrator(rotator, tools, executor=agent, long_term_memory=long_term_memory)
     auto_git     = AutoGit()
 
-    if _cfg._DEFAULT_CWD and Path(_cfg._DEFAULT_CWD).exists():
+    # UNIMOG_CWD (mcp_server.py からの指定) を優先し、次に .env の DEFAULT_CWD を使う
+    unimog_cwd = os.environ.get("UNIMOG_CWD")
+    if unimog_cwd and Path(unimog_cwd).exists():
+        agent.cwd = str(Path(unimog_cwd).resolve())
+    elif _cfg._DEFAULT_CWD and Path(_cfg._DEFAULT_CWD).exists():
         agent.cwd = str(Path(_cfg._DEFAULT_CWD).resolve())
 
     plan_prompt  = (system_prompt or "") + POWERSHELL_EXECUTOR_GUIDANCE
@@ -66,7 +71,8 @@ def main():
         pipe_mode(agent, args[idx + 1]) if idx + 1 < len(args) else sys.exit(1)
     elif "--auto-prompt" in args:
         idx = args.index("--auto-prompt")
-        auto_mode(interactive_orch, args[idx + 1]) if idx + 1 < len(args) else sys.exit(1)
+        # orchestrator を渡すことで /plan プレフィックスを正しく処理できる
+        auto_mode(interactive_orch, args[idx + 1], orchestrator) if idx + 1 < len(args) else sys.exit(1)
     elif "--status" in args:
         agent.print_status(); sys.exit(0)
     else:

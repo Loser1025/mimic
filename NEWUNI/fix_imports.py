@@ -1,5 +1,5 @@
 """
-各 NEWUNI/*.py ファイルに適切な import を付与するスクリプト。
+各 v4_modules/*.py ファイルに適切な import を付与するスクリプト。
 split_v4.py の実行後に走らせること。
 """
 from pathlib import Path

@@ -234,11 +234,20 @@ def pipe_mode(agent: GeminiAgent, prompt: str):
 
 _UNIMOG_DONE_MARKER = "===UNIMOG_DONE==="
 
-def auto_mode(interactive_orch: "InteractiveOrchestrator", prompt: str):
+def auto_mode(
+    interactive_orch: "InteractiveOrchestrator",
+    prompt: str,
+    orchestrator: "Optional[AgentOrchestrator]" = None,
+):
     """
     MCP/Claude Code 連携用の自動実行モード。
     承認・介入を一切行わず、自律的にタスクを完結させる。
+    prompt が "/plan " で始まる場合は Plan-and-Execute モードで実行する。
+    orchestrator を渡すと __main__.py で構築済みのインスタンスを再利用する。
     """
+    is_plan = prompt.startswith("/plan ")
+    actual_prompt = prompt[6:] if is_plan else prompt
+
     interactive_orch._auto_mode = True   # セッション保存等のUIを抑制
 
     # ── on_done コールバック: 最終回答を即座に出力してマーカーを送る ──
@@ -251,13 +260,17 @@ def auto_mode(interactive_orch: "InteractiveOrchestrator", prompt: str):
         sys.stdout.write(_UNIMOG_DONE_MARKER + "\n")
         sys.stdout.flush()
 
-    # ── run_react を別スレッドで実行（教訓保存まで完走させる）──────
+    # ── 実行 ──────────────────────────────────────────────────
     result_holder: list = [None]
     error_holder:  list = [None]
 
     def _run():
         try:
-            result_holder[0] = interactive_orch.run_react(prompt, on_done=on_answer)
+            if is_plan and orchestrator is not None:
+                result_holder[0] = orchestrator.run_with_plan(actual_prompt)
+                on_answer(result_holder[0])
+            else:
+                result_holder[0] = interactive_orch.run_react(actual_prompt, on_done=on_answer)
         except Exception as exc:
             error_holder[0] = exc
             if not answer_sent.is_set():
@@ -265,9 +278,8 @@ def auto_mode(interactive_orch: "InteractiveOrchestrator", prompt: str):
 
     worker = threading.Thread(target=_run, daemon=False)
     worker.start()
-    worker.join()  # 教訓保存含めて完走を待つ
+    worker.join()
 
-    # on_done が呼ばれなかった場合（異常系）
     if not answer_sent.is_set():
         fallback = result_holder[0] or "(応答なし)"
         on_answer(fallback)
