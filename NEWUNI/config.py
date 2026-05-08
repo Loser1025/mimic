@@ -100,8 +100,18 @@ _EMBEDDING_MODEL    = "gemini-embedding-2-preview"
 _HYDE_MODEL         = "gemini-2.0-flash-lite"
 
 _DEFAULT_CWD: Optional[str] = None
-_GEMINI_EMBED_KEY: Optional[str] = None  # embedding 専用 Gemini キー
-_MAX_TOKENS: Optional[int] = None        # モデルの最大出力トークン数（None=制限なし）
+_GEMINI_EMBED_KEYS: list[str] = []  # embedding 専用 Gemini キーリスト（ローテーション）
+_embed_key_idx: int = 0
+_MAX_TOKENS: Optional[int] = None   # モデルの最大出力トークン数（None=制限なし）
+
+def get_next_embed_key() -> str:
+    """Gemini embeddingキーをラウンドロビンで返す。キー未設定時は空文字。"""
+    global _embed_key_idx
+    if not _GEMINI_EMBED_KEYS:
+        return ""
+    key = _GEMINI_EMBED_KEYS[_embed_key_idx % len(_GEMINI_EMBED_KEYS)]
+    _embed_key_idx += 1
+    return key
 
 def _parse_env_file(env_path: Path) -> dict[str, str]:
     """
@@ -172,12 +182,13 @@ def load_config(base_dir: Optional[str] = None) -> tuple[list[AccountConfig], st
         env = _parse_env_file(env_path)
 
         # モデル名グローバルを .env の値で上書き
-        global _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL, _DEFAULT_CWD, _GEMINI_EMBED_KEY, _MAX_TOKENS
-        _DEFAULT_MODEL    = env.get("OR_NEMOTRON_MODEL", env.get("OR_MODEL", _DEFAULT_MODEL))
+        global _DEFAULT_MODEL, _EMBEDDING_MODEL, _HYDE_MODEL, _DEFAULT_CWD, _GEMINI_EMBED_KEYS, _MAX_TOKENS
+        _DEFAULT_MODEL    = env.get("OR_MODEL", env.get("OR_NEMOTRON_MODEL", _DEFAULT_MODEL))
         _EMBEDDING_MODEL  = env.get("EMBEDDING_MODEL", _EMBEDDING_MODEL)
         _HYDE_MODEL       = env.get("HYDE_MODEL",      _HYDE_MODEL)
         _DEFAULT_CWD      = env.get("DEFAULT_CWD",     None) or None
-        _GEMINI_EMBED_KEY = env.get("GEMINI_KEY") or None
+        _GEMINI_EMBED_KEYS = [v for k, v in sorted(env.items())
+                               if k.startswith("GEMINI_KEY") and v.startswith("AIza")]
         _max_raw = env.get("OR_MAX_TOKENS", "").strip()
         _MAX_TOKENS = int(_max_raw) if _max_raw.isdigit() else None
 

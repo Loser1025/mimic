@@ -819,13 +819,9 @@ class AgentOrchestrator:
         return final_result, helpful, unhelpful
 
     def _next_embed_key(self) -> str:
-        """embedding 用アカウントをラウンドロビンで返す"""
-        accounts = self.rotator.accounts
-        if not accounts:
-            return ""
-        key = accounts[self._embed_idx % len(accounts)].api_key
-        self._embed_idx += 1
-        return key
+        """Gemini embeddingキーをラウンドロビンで返す"""
+        import NEWUNI.config as _cfg
+        return _cfg.get_next_embed_key()
 
     def run_with_plan(
         self,

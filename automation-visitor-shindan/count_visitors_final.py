@@ -24,16 +24,22 @@ CSV_TEMP_PATH = r"C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\t
 # --- 共通関数 ---
 async def login_and_get_page(p):
     """ログインしてターゲットページに遷移する"""
+    print("Browser launching...")
     browser = await p.chromium.launch(headless=True) 
     context = await browser.new_context()
     page = await context.new_page()
+    
+    print(f"Logging in to {LOGIN_URL}...")
     await page.goto(LOGIN_URL)
     await page.get_by_role("textbox", name="ID").fill(USER_ID)
     await page.get_by_role("textbox", name="パスワード").fill(USER_PASS)
     await page.get_by_role("button", name="ログイン").click()
     await page.wait_for_load_state("networkidle")
+    
+    print(f"Navigating to target page: {TARGET_URL}...")
     await page.goto(TARGET_URL)
     await page.wait_for_load_state("networkidle")
+    print("Login and page navigation completed.")
     return browser, page
 
 def get_gspread_client():
@@ -45,12 +51,14 @@ def get_gspread_client():
 # --- メイン処理1: 管理画面抽出 ---
 async def run_management_extraction():
     """本日〜明日のデータを抽出し、シートに上書き保存する"""
+    print("Starting Management Extraction process...")
     async with async_playwright() as p:
         browser, page = await login_and_get_page(p)
         try:
             today = datetime.now()
             tomorrow = today + timedelta(days=1)
             
+            print(f"Setting date range: {today.strftime('%Y-%m-%d')} to {tomorrow.strftime('%Y-%m-%d')}...")
             # 日付設定 (開始: 今日, 終了: 明日)
             await page.locator("#DateLastStart-y").select_option(value=str(today.year))
             await asyncio.sleep(0.7)
@@ -64,6 +72,7 @@ async def run_management_extraction():
             await asyncio.sleep(0.7)
             await page.locator("#DateLastEnd-d").select_option(index=tomorrow.day)
             
+            print("Applying filters (絞込)...")
             # 絞込実行
             search_button = page.get_by_role("button", name="絞込")
             if await search_button.count() == 0:
@@ -71,6 +80,7 @@ async def run_management_extraction():
             await search_button.click()
             await page.wait_for_load_state("networkidle")
             
+            print("Exporting CSV...")
             # CSV抽出
             export_button = page.get_by_role("button", name="CSV抽出")
             if await export_button.count() == 0:
@@ -79,7 +89,9 @@ async def run_management_extraction():
                 await export_button.click()
             download = await download_info.value
             await download.save_as(CSV_TEMP_PATH)
+            print(f"CSV saved to {CSV_TEMP_PATH}")
 
+            print(f"Uploading data to sheet: {SHEET_NAMES['extraction']}...")
             # スプレッドシートへアップロード
             await upload_raw_data_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["extraction"])
             print("Management extraction completed successfully.")
@@ -118,13 +130,16 @@ async def upload_raw_data_to_sheet(csv_path, sheet_name):
 # --- メイン処理2: 約束集計 ---
 async def run_appointment_aggregation():
     """予約電話データを全件抽出し、本日・明日の分を集計してシートに追記する"""
+    print("Starting Appointment Aggregation process...")
     async with async_playwright() as p:
         browser, page = await login_and_get_page(p)
         try:
+            print("Filtering by status '予約電話'...")
             # ステータス絞り込み (日付は絞り込まない)
             status_dropdown = page.locator("#status_chu")
             await status_dropdown.select_option(label="予約電話")
             
+            print("Applying filters (絞込)...")
             # 絞込実行
             search_button = page.get_by_role("button", name="絞込")
             if await search_button.count() == 0:
@@ -132,6 +147,7 @@ async def run_appointment_aggregation():
             await search_button.click()
             await page.wait_for_load_state("networkidle")
             
+            print("Exporting CSV...")
             # CSV抽出
             export_button = page.get_by_role("button", name="CSV抽出")
             if await export_button.count() == 0:
@@ -140,7 +156,9 @@ async def run_appointment_aggregation():
                 await export_button.click()
             download = await download_info.value
             await download.save_as(CSV_TEMP_PATH)
+            print(f"CSV saved to {CSV_TEMP_PATH}")
 
+            print(f"Creating pivot and uploading to sheet: {SHEET_NAMES['aggregation']}...")
             # ピボット集計してアップロード
             await upload_pivot_to_sheet(CSV_TEMP_PATH, SHEET_NAMES["aggregation"])
             print("Appointment aggregation completed successfully.")
