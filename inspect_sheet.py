@@ -1,7 +1,7 @@
 import openpyxl, glob, os
 
-# xlsxファイルを自動検索
-files = glob.glob(r"C:\Users\Loser\Desktop\-\tamalabo\*.xlsx")
+# sheet.xlsxを探す
+files = glob.glob(r"C:\Users\Loser\Desktop\-\tamalabo\sheet.xlsx")
 print("見つかったxlsxファイル:", files)
 if not files:
     print("xlsxファイルが見つかりません")
