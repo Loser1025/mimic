@@ -1,5 +1,13 @@
-import openpyxl
-wb = openpyxl.load_workbook(r"C:\Users\Loser\Desktop\-\tamalabo\全担当時間別表.xlsx", data_only=True)
+import openpyxl, glob, os
+
+# xlsxファイルを自動検索
+files = glob.glob(r"C:\Users\Loser\Desktop\-\tamalabo\*.xlsx")
+print("見つかったxlsxファイル:", files)
+if not files:
+    print("xlsxファイルが見つかりません")
+    exit(1)
+
+wb = openpyxl.load_workbook(files[0], data_only=True)
 ws = wb.active
 print("シート名:", ws.title)
 print("最大行:", ws.max_row)
