@@ -8,6 +8,7 @@ Actor（OwlAlpha）へ渡す指示書の品質がシステム全体の品質を�
 from __future__ import annotations
 
 import json
+import re
 import random
 import time
 import urllib.error
@@ -81,6 +82,46 @@ class MistralAPIError(Exception):
 
 class MistralRateLimitError(MistralAPIError):
     pass
+
+
+# ── 計画生成専用プロンプト ────────────────────────────────────────
+THINKER_PLAN_PROMPT = """\
+あなたは優秀なテックリードです。
+ユーザーのタスクを具体的な実行ステップに分解し、JSONのみを出力してください。
+
+# 実行者（Actor）について
+- PowerShell コマンド実行（git・gh CLI・npm・node など）
+- ファイルの読み取り・編集・作成・削除
+- 作業ディレクトリ: Windows 環境
+- ファイルを編集する前に必ず全て読み取ること
+
+# 絶対ルール（違反すると処理が失敗する）
+- **出力はJSONのみ**。前後・途中に一切のテキスト・説明・思考を含めてはならない
+- **```json などのコードブロックで囲ってはならない**
+- 出力の1文字目は必ず `{` でなければならない
+- ファイル編集ステップの直前には必ず「対象ファイルを全て読み取る」ステップを置く
+
+# 出力形式（このフィールドのみ使用すること）
+{"steps":[
+  {"label":"","description":"ステップの説明","parallel":false,"on_failure":"retry","on_success":"","max_iterations":0},
+  {"label":"check","description":"確認ステップ","parallel":false,"on_failure":"goto:fallback","on_success":"","max_iterations":3},
+  {"label":"fallback","description":"代替手段","parallel":false,"on_failure":"skip","on_success":"","max_iterations":0}
+]}
+
+# フィールドの説明
+- label: goto のジャンプ先となる名前（省略可）
+- description: ステップの説明（実行者への指示）
+- parallel: false（現在は逐次実行のみ）
+- on_failure: "retry"（デフォルト）| "skip" | "abort" | "goto:<label>"
+- on_success: ""（デフォルト・次へ）| "goto:<label>" | "abort"
+- max_iterations: goto ループの上限（0=安全上限10を自動適用）
+
+# 絶対禁止フィールド
+- "command" フィールドは含めてはならない（JSONを破壊する）
+- "content" フィールドは含めてはならない（JSONを破壊する）
+- "code" フィールドは含めてはならない
+- 上記6フィールド以外は一切含めないこと
+"""
 
 
 class MistralThinker:
@@ -267,6 +308,103 @@ class MistralThinker:
 
         log.info({"event": "thinker_spec", "length": len(spec)})
         return spec
+
+    def plan(self, user_message: str) -> list[dict]:
+        """
+        ユーザータスクを WorkflowGraph 用の PlanStep リストに分解する。
+        Mistral に JSON を生成させ、パースして返す。
+        会話履歴に記録するので review() でこの計画を参照できる。
+        """
+        self.conversation.append({"role": "user", "content": user_message})
+
+        # 計画生成時は THINKER_PLAN_PROMPT で上書き
+        original_prompt = self.system_prompt
+        self.system_prompt = THINKER_PLAN_PROMPT
+        safe_print(C.gray(f"  → mistral ({self.config.model}) [plan]"), flush=True)
+
+        # ストリーミングで JSON を受け取る（レンダリングは不要なのでシンプル表示）
+        safe_print(C.bold_mem(f"  ╔{'═' * 54}"))
+        safe_print(C.bold_mem(f"  ║  ✦ 計画生成 (Mistral)"))
+        safe_print(C.mem(f"  ╟{'─' * 54}"))
+        raw_json = self._stream_call_api(self.conversation)
+        safe_print(f"\n{C.bold_mem(f'  ╚{chr(9552) * 54}')}\n")
+
+        self.system_prompt = original_prompt  # プロンプトを元に戻す
+        self.conversation.append({"role": "assistant", "content": raw_json})
+
+        # JSON パース
+        steps = self._parse_plan_json(raw_json)
+        log.info({"event": "thinker_plan", "steps": len(steps)})
+        return steps
+
+    @staticmethod
+    def _parse_plan_json(text: str) -> list[dict]:
+        """
+        JSON テキストから steps リストを抽出する。
+        Mistral が ```json ... ``` で返す場合も対応。
+        """
+        # ── Step 1: ```json ... ``` コードブロックを剥がす ──────────
+        stripped = text.strip()
+        m = re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', stripped)
+        if m:
+            stripped = m.group(1).strip()
+
+        # ── Step 1b: command/content フィールドを除去（JSONを壊す複雑な値）──
+        # カンマ付き・なし両パターンで削除（DOTALL で複数行対応）
+        for field in ("command", "content", "code"):
+            stripped = re.sub(
+                rf',?\s*"{field}"\s*:\s*"(?:[^"\\]|\\.)*"',
+                '',
+                stripped,
+                flags=re.DOTALL,
+            )
+
+        # ── Step 2: brace-matching で最外の { ... } ブロックを探す ──
+        def _iter_json_blocks(s: str):
+            i = 0
+            while i < len(s):
+                if s[i] == '{':
+                    depth, start = 0, i
+                    for j in range(i, len(s)):
+                        if s[j] == '{':
+                            depth += 1
+                        elif s[j] == '}':
+                            depth -= 1
+                            if depth == 0:
+                                yield s[start:j + 1]
+                                i = j
+                                break
+                i += 1
+
+        for block in _iter_json_blocks(stripped):
+            try:
+                data = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            steps_raw = data.get("steps", [])
+            if not steps_raw or not isinstance(steps_raw, list):
+                continue
+            result = []
+            for s in steps_raw[:20]:
+                if not isinstance(s, dict):
+                    continue
+                desc = str(s.get("description", "")).strip()
+                if not desc:
+                    continue
+                result.append({
+                    "description":    desc,
+                    "parallel":       False,  # 安全のため常に逐次
+                    "label":          str(s.get("label", "")),
+                    "on_failure":     str(s.get("on_failure", "retry")),
+                    "on_success":     str(s.get("on_success", "")),
+                    "max_iterations": int(s.get("max_iterations", 0)),
+                })
+            if result:
+                return result
+
+        # ── Step 3: パース完全失敗 → 空リストを返す（呼び出し側でエラー表示）──
+        log.warning({"event": "thinker_plan_parse_failed", "text_preview": text[:300]})
+        return []
 
     def review(self, actor_summary: str) -> str:
         """Actor の結果をレビューする。ストリーミング+レンダリング表示しながら全文を返す。"""
