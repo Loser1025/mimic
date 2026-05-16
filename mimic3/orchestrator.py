@@ -1238,7 +1238,7 @@ class InteractiveOrchestrator:
 
             if len(tool_calls) > 1 and not has_write_tool:
                 # ── 並列実行（読み取り系のみ）──────────────────────
-                safe_print(C.orange(f"  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
+                safe_print(C.orange(f"\n  ⚡ {len(tool_calls)} ツールを並列実行"), flush=True)
                 ordered: list[Optional[dict]] = [None] * len(tool_calls)
 
                 def _par_exec(idx_tc: tuple) -> tuple:
@@ -1247,7 +1247,7 @@ class InteractiveOrchestrator:
                     fn_a = tc.get("args", {})
                     call_id = tc.get("id") or f"call_{fn_n}_{idx}"
                     safe_print(
-                        f"\n  {C.bold_green('⚙')} {C.green(fn_n)}"
+                        f"  {C.bold_green('⚙')} {C.green(fn_n)}"
                         + C.cyan(f"({self._fmt_args(fn_a)})"),
                         flush=True,
                     )
@@ -1268,7 +1268,7 @@ class InteractiveOrchestrator:
                     except Exception as e:
                         r_str = f"ツール実行エラー: {fn_n}: {e}"
                         log.error({"event": "react_tool_error_par", "tool": fn_n, "error": str(e)})
-                        safe_print(C.red(f"\n  ✗ [{fn_n}] 並列実行エラー: {e}"), flush=True)
+                        safe_print(C.red(f"  ✗ [{fn_n}] 並列実行エラー: {e}"), flush=True)
                         safe_print(C.gray("    （並列実行中のため自動リトライ・介入なし — AIがリカバリします）"), flush=True)
                     obs_preview = r_str[:300].replace("\n", " ")
                     safe_print(C.cyan(f"  👁 {obs_preview}"), flush=True)
