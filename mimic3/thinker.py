@@ -73,6 +73,39 @@ ActorはWebブラウザやUIを持ちません。コマンドラインとファ�
 """
 
 
+THINKER_STEP_REVIEW_PROMPT = """\
+あなたは優秀なテックリードです。
+実行者（Actor）が1ステップを完了しました。その結果を評価し、残りの計画を続行すべきか、修正すべきかを判断してください。
+
+# 絶対ルール（違反すると処理が失敗する）
+- **出力はJSONのみ**。前後・途中に一切のテキスト・説明・思考を含めてはならない
+- **```json などのコードブロックで囲ってはならない**
+- 出力の1文字目は必ず `{` でなければならない
+
+# 出力形式（3パターンのどれか1つ）
+{"action":"continue","reason":"判断理由を1文で"}
+{"action":"replan","reason":"判断理由","steps":[{"label":"","description":"ステップの説明","on_failure":"retry","on_success":"","max_iterations":0}]}
+{"action":"done","reason":"完了理由を1文で"}
+
+# action の意味
+- "continue": 残りのステップをそのまま続行する（期待通りの結果だった場合）
+- "replan": 実行結果を踏まえ、残りのステップを差し替える（予期しない状況が発生した場合）
+- "done": 全体ゴールが達成された。これ以上のステップは不要（タスク完了時のみ使う）
+
+# replan 時の steps フィールドのルール
+- 残りすべての作業を含めること（完了済みステップは不要）
+- フォーマット: label/description/on_failure/on_success/max_iterations のみ使用
+- 空配列は禁止（replan なら必ず1件以上）
+- ファイルを編集するステップの直前には必ず「対象ファイルを全て読み取る」ステップを置く
+
+# 判断基準
+- ステップが正常に完了した → continue
+- エラーが起きたが Actor が解決済み → continue
+- 実行結果が次のステップの前提を変えた → replan
+- 残りのステップがすでに不要になった、またはゴール達成 → done
+"""
+
+
 class MistralAPIError(Exception):
     def __init__(self, status: int, message: str):
         self.status  = status
@@ -424,3 +457,108 @@ class MistralThinker:
 
         log.info({"event": "thinker_review", "length": len(assessment)})
         return assessment
+
+    def step_review(
+        self,
+        original_goal: str,
+        just_executed: str,
+        step_result: str,
+        remaining_steps: list,
+        executed_log: list,
+    ) -> dict:
+        """
+        1ステップ実行後にその結果を評価し、残りの計画を続行・修正・完了を判断する。
+        戻り値: {"action": "continue"|"replan"|"done", "reason": "...", "steps": [...]}
+        """
+        remaining_text = "\n".join(
+            f"  {i+1}. {s.get('description', str(s))[:80]}"
+            for i, s in enumerate(remaining_steps[:10])
+        ) if remaining_steps else "（残りステップなし）"
+
+        log_text = "\n".join(
+            f"  ✓ {e['description'][:60]}"
+            for e in executed_log[-3:]
+        ) if executed_log else "（なし）"
+
+        prompt = (
+            f"[全体ゴール]\n{original_goal}\n\n"
+            f"[完了済みステップ]\n{log_text}\n\n"
+            f"[今実行したステップ]\n{just_executed}\n\n"
+            f"[実行結果]\n{step_result[:1500]}\n\n"
+            f"[残りのステップ]\n{remaining_text}\n\n"
+            "上記を踏まえて action を決定し、JSONのみを出力してください。"
+        )
+        self.conversation.append({"role": "user", "content": prompt})
+
+        original_prompt = self.system_prompt
+        self.system_prompt = THINKER_STEP_REVIEW_PROMPT
+        safe_print(C.gray(f"  → mistral ({self.config.model}) [step_review]"), flush=True)
+        raw = self._stream_with_box("ステップ評価 (Mistral)", self.conversation)
+        self.system_prompt = original_prompt
+
+        self.conversation.append({"role": "assistant", "content": raw})
+        log.info({"event": "thinker_step_review", "raw_length": len(raw)})
+
+        return self._parse_step_decision(raw)
+
+    @staticmethod
+    def _parse_step_decision(text: str) -> dict:
+        """
+        step_review の JSON 出力をパースする。
+        失敗時は安全側フォールバック {"action": "continue"} を返す。
+        """
+        stripped = text.strip()
+        m = re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', stripped)
+        if m:
+            stripped = m.group(1).strip()
+
+        def _iter_json_blocks(s: str):
+            i = 0
+            while i < len(s):
+                if s[i] == '{':
+                    depth, start = 0, i
+                    for j in range(i, len(s)):
+                        if s[j] == '{':
+                            depth += 1
+                        elif s[j] == '}':
+                            depth -= 1
+                            if depth == 0:
+                                yield s[start:j + 1]
+                                i = j
+                                break
+                i += 1
+
+        for block in _iter_json_blocks(stripped):
+            try:
+                data = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            action = data.get("action", "")
+            if action not in ("continue", "replan", "done"):
+                continue
+            result: dict = {"action": action, "reason": str(data.get("reason", ""))}
+            if action == "replan":
+                raw_steps = data.get("steps", [])
+                parsed: list[dict] = []
+                for s in raw_steps[:20]:
+                    if not isinstance(s, dict):
+                        continue
+                    desc = str(s.get("description", "")).strip()
+                    if not desc:
+                        continue
+                    parsed.append({
+                        "description":    desc,
+                        "parallel":       False,
+                        "label":          str(s.get("label", "")),
+                        "on_failure":     str(s.get("on_failure", "retry")),
+                        "on_success":     str(s.get("on_success", "")),
+                        "max_iterations": int(s.get("max_iterations", 0)),
+                    })
+                if not parsed:
+                    log.warning({"event": "step_review_replan_empty_steps"})
+                    return {"action": "continue", "reason": "replan steps が空のため continue にフォールバック"}
+                result["steps"] = parsed
+            return result
+
+        log.warning({"event": "step_review_parse_failed", "text_preview": text[:200]})
+        return {"action": "continue", "reason": "パース失敗 → 安全側 continue"}

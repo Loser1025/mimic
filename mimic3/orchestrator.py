@@ -1376,6 +1376,8 @@ class DualModelOrchestrator:
         self.thinker    = thinker
         self.actor_orch = actor_orch
         self.auto_git   = auto_git
+        # 冷却タイマー: 初回は即実行できるよう40秒前に設定しておく
+        self._last_thinker_call: float = time.time() - self._THINKER_COOLDOWN
 
     @staticmethod
     def _print_thinker_block(label: str, text: str) -> None:
@@ -1433,9 +1435,23 @@ class DualModelOrchestrator:
             safe_print(f"  {C.mem('║')}    {s['description']}")
         safe_print(C.bold_mem(f"  ╚{'═' * 54}\n"))
 
+    def _wait_cooldown(self) -> None:
+        """
+        前回の Thinker 呼び出しから _THINKER_COOLDOWN 秒が経過するまで待機する。
+        Actor の実行時間が既に40秒を超えていれば即通過。
+        呼び出し元で Thinker 呼び出し完了後に _last_thinker_call を更新すること。
+        """
+        elapsed = time.time() - self._last_thinker_call
+        wait = self._THINKER_COOLDOWN - elapsed
+        if wait > 0.5:
+            safe_print(C.yellow(f"  ⏳ Thinker冷却中... {wait:.0f}秒"), flush=True)
+            time.sleep(wait)
+
     # ── ワークフロー実行 ─────────────────────────────────────────
 
-    MAX_STEP_RETRY = 2  # 1ステップあたりの最大リトライ回数
+    MAX_STEP_RETRY    = 2     # 1ステップあたりの最大リトライ回数
+    _THINKER_COOLDOWN = 40.0  # Mistral RPM 2制限に対する安全冷却時間（秒）
+    MAX_REPLAN_COUNT  = 5     # replan の最大回数（無限ループ防止）
 
     def _execute_workflow_plan(self, steps: list[dict]) -> str:
         """
@@ -1542,6 +1558,167 @@ class DualModelOrchestrator:
 
         return "\n".join(all_summaries)
 
+    # ── 適応型ワークフロー実行 ───────────────────────────────────
+
+    def _execute_adaptive_workflow(
+        self,
+        steps: list[dict],
+        original_goal: str,
+    ) -> str:
+        """
+        毎ステップ実行後に Thinker が結果を評価し、残りの計画を動的に修正する。
+
+        各ステップ後のフロー:
+          continue → 残りをそのまま続行
+          replan   → 残りのステップを Thinker の新計画で差し替え（MAX_REPLAN_COUNT 上限）
+          done     → 全体ゴール達成と判断してループ終了
+        """
+        remaining: list[dict] = list(steps)
+        executed_log: list[dict] = []
+        all_summaries: list[str] = []
+        replan_count = 0
+        step_num = 0
+
+        while remaining:
+            step_dict = remaining.pop(0)
+            step_num += 1
+            total_remaining = len(remaining)
+
+            step = PlanStep(
+                index          = step_num,
+                description    = step_dict.get("description", ""),
+                label          = step_dict.get("label", ""),
+                on_failure     = step_dict.get("on_failure", "retry"),
+                on_success     = step_dict.get("on_success", ""),
+                max_iterations = step_dict.get("max_iterations", 0),
+            )
+            graph = WorkflowGraph([step])
+
+            retry_count = 0
+            step_result = ""
+
+            while True:  # retry ループ
+                step.status = "running"
+                safe_print(
+                    C.bold_mem(
+                        f"\n  ┌─ Step {step_num} (残り{total_remaining}): "
+                        f"{step.description[:60]}"
+                    ),
+                    flush=True,
+                )
+
+                # Actor 実行
+                self.actor_orch.agent.clear_history()
+                try:
+                    step_result = self.actor_orch.run_react(step.description)
+                    step.result = step_result
+                    graph.parse_state_updates(step_result)
+                except KeyboardInterrupt:
+                    safe_print(C.yellow("\n\n  [割り込み] Ctrl+C — ワークフローを中断します。"), flush=True)
+                    step.status = "failed"
+                    return "\n".join(all_summaries) + "\n[Ctrl+C により中断]"
+                except UserRejectedWriteError:
+                    safe_print(C.yellow("\n  ✋ 書き込みを拒否しました。ワークフローを中断します。"), flush=True)
+                    step.status = "failed"
+                    return "\n".join(all_summaries) + "\n[書き込み拒否により中断]"
+                except Exception as e:
+                    step_result = f"エラー: {e}"
+                    step.result = step_result
+                    step.status = "failed"
+
+                # 即時失敗判定（on_failure で静的処理）
+                failed = (
+                    step_result.startswith("エラー:")
+                    or step_result.startswith("ツール実行エラー:")
+                )
+                if failed:
+                    step.status = "failed"
+                    safe_print(C.yellow(f"  └─ ✗ 失敗: {step_result[:80]}"), flush=True)
+                    all_summaries.append(
+                        f"[Step {step_num}] ✗ {step.description[:40]}\n{step_result[:200]}"
+                    )
+                    action, _ = graph.resolve_failure(step)
+
+                    if action == "retry" and retry_count < self.MAX_STEP_RETRY:
+                        retry_count += 1
+                        step.status = "retrying"
+                        safe_print(C.yellow(f"  リトライ ({retry_count}/{self.MAX_STEP_RETRY})..."), flush=True)
+                        continue
+
+                    if action == "abort":
+                        safe_print(C.red("  ✗ abort: ワークフローを中断します。"), flush=True)
+                        return "\n".join(all_summaries) + "\n[abort により中断]"
+
+                    # skip or retry上限超過 → スキップして Thinker 評価もスキップ
+                    step.status = "skipped"
+                    safe_print(C.gray("  スキップして次のステップへ"), flush=True)
+                    break
+
+                # 成功
+                step.status = "done"
+                safe_print(C.mem(f"  └─ ✓ 完了"), flush=True)
+                all_summaries.append(
+                    f"[Step {step_num}] ✓ {step.description[:40]}\n{step_result[:200]}"
+                )
+                executed_log.append({
+                    "description": step.description,
+                    "result":      step_result[:300],
+                })
+                break  # retry ループ終了
+
+            # 失敗/スキップは Thinker 評価をスキップ（on_failure で静的処理済み）
+            if step.status in ("failed", "skipped"):
+                continue
+
+            # ── Thinker: ステップ評価（冷却後）──────────────────────
+            safe_print(C.bold_green(f"\n  ✦ [Thinker] ステップ評価中..."), flush=True)
+            self._wait_cooldown()
+            try:
+                decision = self.thinker.step_review(
+                    original_goal   = original_goal,
+                    just_executed   = step.description,
+                    step_result     = step_result,
+                    remaining_steps = remaining,
+                    executed_log    = executed_log,
+                )
+            except Exception as e:
+                safe_print(C.yellow(f"  ⚠ Thinker step_review エラー: {e} → continue"), flush=True)
+                decision = {"action": "continue", "reason": str(e)}
+            finally:
+                self._last_thinker_call = time.time()
+
+            action = decision.get("action", "continue")
+            reason = decision.get("reason", "")
+
+            if action == "continue":
+                safe_print(C.mem(f"  → 続行: {reason}"), flush=True)
+
+            elif action == "replan":
+                if replan_count < self.MAX_REPLAN_COUNT:
+                    replan_count += 1
+                    new_steps = decision.get("steps", [])
+                    remaining = new_steps
+                    safe_print(
+                        C.bold_mem(
+                            f"\n  ↻ 計画を修正します "
+                            f"(replan {replan_count}/{self.MAX_REPLAN_COUNT})"
+                        ),
+                        flush=True,
+                    )
+                    safe_print(C.mem(f"  理由: {reason}"), flush=True)
+                    self._print_plan(remaining)
+                else:
+                    safe_print(
+                        C.yellow(f"  ⚠ replan 上限({self.MAX_REPLAN_COUNT})に達しました → 続行"),
+                        flush=True,
+                    )
+
+            elif action == "done":
+                safe_print(C.bold_green(f"  ✦ [Thinker] タスク完了: {reason}"), flush=True)
+                break
+
+        return "\n".join(all_summaries)
+
     # ── メインエントリポイント ────────────────────────────────────
 
     def run(self, user_message: str) -> str:
@@ -1556,13 +1733,16 @@ class DualModelOrchestrator:
         """
         safe_print(C.cyan(f"\n  {'─'*20} Dual Mode {'─'*20}"), flush=True)
 
-        # ── 1. Thinker: ステップ計画を生成 ──────────────────────
+        # ── 1. Thinker: ステップ計画を生成（冷却タイマー適用）───
         safe_print(C.bold_green("\n  ✦ [Thinker] 実行計画を生成中..."), flush=True)
+        self._wait_cooldown()
         try:
             steps = self.thinker.plan(user_message)
         except Exception as e:
             safe_print(C.red(f"\n  ✗ Thinker エラー: {e}"), flush=True)
             return f"Thinker エラー: {e}"
+        finally:
+            self._last_thinker_call = time.time()
 
         if not steps:
             safe_print(C.red(
@@ -1577,25 +1757,26 @@ class DualModelOrchestrator:
 
         if not self._ask_approval(f"{len(steps)} ステップの計画を実行しますか？"):
             safe_print(C.gray("  否決しました。新しい指示を入力してください。"), flush=True)
-            # 計画と元の依頼を会話に残しつつ、否決メモを追記する
-            # → 次の入力時に Thinker が「前の計画は否決された」文脈を持てる
             self.thinker.conversation.append({
                 "role": "user",
                 "content": "[ユーザーが上記の計画を否決しました。次の指示で別のアプローチを検討してください。]"
             })
             return ""
 
-        # ── 3. WorkflowGraph で全ステップを実行 ─────────────────
-        safe_print(C.bold_green("\n  ⚡ [WorkflowGraph] 実行開始..."), flush=True)
-        all_summaries = self._execute_workflow_plan(steps)
+        # ── 3. 適応型ワークフローで全ステップを実行 ─────────────
+        safe_print(C.bold_green("\n  ⚡ [AdaptiveWorkflow] 実行開始..."), flush=True)
+        all_summaries = self._execute_adaptive_workflow(steps, user_message)
 
-        # ── 4. Thinker: 結果レビュー ─────────────────────────────
-        safe_print(C.bold_green("\n  ✦ [Thinker] 結果をレビュー中..."), flush=True)
+        # ── 4. Thinker: 最終サマリーレビュー（冷却タイマー適用）─
+        safe_print(C.bold_green("\n  ✦ [Thinker] 最終レビュー中..."), flush=True)
+        self._wait_cooldown()
         try:
             review = self.thinker.review(all_summaries)
         except Exception as e:
             safe_print(C.red(f"\n  ✗ Thinker レビューエラー: {e}"), flush=True)
             return all_summaries
+        finally:
+            self._last_thinker_call = time.time()
 
         safe_print(C.gray("  次の指示を入力してください（完了なら exit）"), flush=True)
         return review
