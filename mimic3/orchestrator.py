@@ -313,7 +313,8 @@ class AgentOrchestrator:
       - wait_to_start() でタスク開始前に RPM 残量を確認・自動待機
     """
 
-    MAX_STEP_RETRY = 2  # 1ステップあたりの最大リトライ回数
+    MAX_STEP_RETRY   = 2  # 1ステップあたりの最大リトライ回数
+    MAX_REPLAN_COUNT = 3  # リプランの最大回数（リトライ上限到達後に残ステップを再生成）
 
     def __init__(self, rotator: "AccountRotator", tool_registry: "ToolRegistry",
                  executor: Optional["OpenRouterAgent"] = None):
@@ -457,6 +458,72 @@ class AgentOrchestrator:
         r.set_system_prompt(REVIEWER_SYSTEM_PROMPT)
         r.set_thinking(False, silent=True)
         return r
+
+    def _build_replan_prompt(
+        self,
+        user_message: str,
+        failed_step: "PlanStep",
+        fail_reason: str,
+        completed_steps: list,
+        remaining_descs: list[str],
+    ) -> str:
+        completed_text = "\n".join(
+            f"  ✓ Step {s.index}: {s.description[:60]}" for s in completed_steps
+        ) or "（なし）"
+        remaining_text = (
+            "\n".join(f"  - {d}" for d in remaining_descs) if remaining_descs else "（なし）"
+        )
+        tool_names = ", ".join(
+            t["function"]["name"] for t in self.tool_registry.get_specs()
+        ) if self.tool_registry.get_specs() else "run_powershell, read_file, write_file, edit_file, search_files, web_search"
+        return (
+            f"[全体タスク] {user_message}\n\n"
+            f"[完了済みステップ]\n{completed_text}\n\n"
+            f"[失敗したステップ]\n"
+            f"  ✗ Step {failed_step.index}: {failed_step.description}\n"
+            f"  理由: {fail_reason[:300]}\n\n"
+            f"[当初の残りステップ]\n{remaining_text}\n\n"
+            "上記の失敗を踏まえて、残りの作業を完了するための新しいステップをJSONで生成してください。\n"
+            "・完了済みのステップは含めないこと\n"
+            "・失敗ステップの代替アプローチを先頭に含めること\n"
+            "・ステップ数は必要最小限に（最大10ステップ）\n\n"
+            "【出力ルール・絶対厳守】\n"
+            "1. 出力の1文字目は { でなければならない\n"
+            '2. 形式: {"steps":[{"description":"操作内容","parallel":false}, ...]}\n'
+            "3. JSONのみ出力（説明文なし）\n\n"
+            f"[OS] Windows 10 / PowerShell\n"
+            f"[作業フォルダ] {self.executor.cwd}\n"
+            f"[ツール] {tool_names}"
+        )
+
+    def _replan_remaining(
+        self,
+        user_message: str,
+        failed_step: "PlanStep",
+        fail_reason: str,
+        completed_steps: list,
+        remaining_descs: list[str],
+    ) -> list[dict]:
+        safe_print(C.orange(
+            f"\n  ↻ リプラン: Step {failed_step.index} 失敗 → 残りステップを再生成"
+        ), flush=True)
+        prompt = self._build_replan_prompt(
+            user_message, failed_step, fail_reason, completed_steps, remaining_descs
+        )
+        plan_raw = self.planner.run_stream(
+            prompt,
+            callback=lambda t: safe_print(C.purple(t), end="", flush=True),
+        )
+        new_descs = self._parse_plan(plan_raw)
+        if not new_descs:
+            safe_print(C.yellow("  ⚠ リプランのJSONパース失敗 → 残りステップをスキップ"), flush=True)
+        else:
+            safe_print(C.bold_mem(
+                f"  ✓ リプラン完了: {len(new_descs)} ステップに差し替え"
+            ), flush=True)
+        log.info({"event": "replan", "failed_step": failed_step.index,
+                  "new_step_count": len(new_descs)})
+        return new_descs
 
     def _execute_step(
         self,
@@ -855,6 +922,7 @@ class AgentOrchestrator:
                         return jump_to  # goto シグナル
                     else:
                         # retry
+                        retry_ok = False
                         for _ in range(self.MAX_STEP_RETRY):
                             prev_step.status = "retrying"
                             if on_step:
@@ -880,7 +948,10 @@ class AgentOrchestrator:
                             )
                             ok2, _ = self._parse_review(re_raw)
                             if ok2:
+                                retry_ok = True
                                 break
+                        if not retry_ok:
+                            return "replan"
                 else:
                     # ── 成功時の on_success を処理 ──────────────────
                     s_action, s_jump = workflow.resolve_success(prev_step)
@@ -939,12 +1010,10 @@ class AgentOrchestrator:
 
             with ThreadPoolExecutor(max_workers=n_accounts) as reviewer_pool:
                 pending: Optional[tuple["PlanStep", "Future"]] = None  # 直前の逐次Reviewer
+                replan_count = 0
 
-                batch_iter = iter(range(len(batches)))
-                for bi in batch_iter:
-                    if workflow_aborted:
-                        break
-
+                bi = 0
+                while bi < len(batches) and not workflow_aborted:
                     # goto が発生していた場合: 対象インデックス以降のバッチへ再実行
                     if goto_index is not None:
                         target_idx = goto_index
@@ -957,8 +1026,6 @@ class AgentOrchestrator:
                             continue  # 再度 goto が発生した場合は次ループで処理
                         break  # _do_goto が残りバッチを消化したのでメインループ終了
 
-                    batch = batches[bi]
-
                     # ── 前の逐次ステップの Reviewer 結果を待ってから次を開始 ──
                     if pending is not None:
                         prev_step, prev_future = pending
@@ -969,13 +1036,44 @@ class AgentOrchestrator:
                             if sig == -1:
                                 workflow_aborted = True
                                 break
-                            if isinstance(sig, int):
+                            elif sig == "replan" and replan_count < self.MAX_REPLAN_COUNT:
+                                replan_count += 1
+                                remaining_descs = [
+                                    s.description for b in batches[bi:] for s in b
+                                    if s.status == "pending"
+                                ]
+                                new_descs = self._replan_remaining(
+                                    user_message, prev_step, reason,
+                                    [s for s in steps if s.status == "done"],
+                                    remaining_descs,
+                                )
+                                if new_descs:
+                                    start_idx = max((s.index for s in steps), default=0) + 1
+                                    new_plan_steps = [
+                                        PlanStep(
+                                            index=start_idx + i,
+                                            description=d["description"],
+                                            parallel=d.get("parallel", False),
+                                            label=d.get("label", ""),
+                                            on_failure=d.get("on_failure", "retry"),
+                                            on_success=d.get("on_success", ""),
+                                            max_iterations=int(d.get("max_iterations", 0)),
+                                            join_policy=d.get("join_policy", "all"),
+                                        )
+                                        for i, d in enumerate(new_descs)
+                                    ]
+                                    steps.extend(new_plan_steps)
+                                    batches = batches[:bi] + self._group_into_batches(new_plan_steps)
+                                    continue  # batches[bi] は new_plan_steps の先頭バッチ
+                            elif isinstance(sig, int):
                                 goto_index = sig
                         except Exception as e:
                             log.warning({"event": "reviewer_sync_error", "error": str(e)})
 
                     if workflow_aborted:
                         break
+
+                    batch = batches[bi]
 
                     if len(batch) == 1:
                         # 逐次実行: Reviewer をバックグラウンド投入し future を保持
@@ -993,6 +1091,7 @@ class AgentOrchestrator:
                         self._execute_steps_parallel(
                             batch, steps, user_message, on_step, workflow=workflow
                         )
+                    bi += 1
 
                 # 最後の逐次ステップの Reviewer を処理
                 if pending is not None and not workflow_aborted:
@@ -1346,437 +1445,4 @@ class InteractiveOrchestrator:
         return fallback
 
 
-# ════════════════════════════════════════════════════════════════
-# DualModelOrchestrator — Thinker（Mistral）+ WorkflowGraph + Actor（OwlAlpha）
-# ════════════════════════════════════════════════════════════════
-
-class DualModelOrchestrator:
-    """
-    Thinker（Mistral）が JSON ステップ計画を生成し、
-    WorkflowGraph が制御フローを管理しながら Actor（OwlAlpha）が各ステップを実行する。
-
-    フロー（1ユーザー入力につき1サイクル）:
-      1. Thinker がユーザー入力を受け取り PlanStep リストを生成（JSON）
-      2. Actor が指示書をタスクとして ReAct ループ実行
-      3. Thinker が Actor の結果をレビュー（完了か・課題があるかを報告）
-      4. ユーザーに制御を返す → ユーザーが次の指示を出す
-
-    安全設計:
-      - Actor の会話履歴はサイクル開始時にリセット（汚染防止）
-      - Thinker の会話履歴はサイクルをまたいで蓄積（文脈継続）
-      - UserRejectedWriteError は Actor から伝播し即停止
-    """
-
-    def __init__(
-        self,
-        thinker:    "MistralThinker",  # type: ignore[name-defined]
-        actor_orch: "InteractiveOrchestrator",
-        auto_git:   "AutoGit",
-    ):
-        self.thinker    = thinker
-        self.actor_orch = actor_orch
-        self.auto_git   = auto_git
-        # 冷却タイマー: 初回は即実行できるよう40秒前に設定しておく
-        self._last_thinker_call: float = time.time() - self._THINKER_COOLDOWN
-
-    @staticmethod
-    def _print_thinker_block(label: str, text: str) -> None:
-        """Thinker の出力を Aqua 枠 + Markdown レンダリングで表示する。"""
-        width = 54
-        top    = C.bold_mem(f"  ╔{'═' * width}")
-        header = C.bold_mem(f"  ║  ✦ {label}")
-        sep    = C.mem(f"  ╟{'─' * width}")
-        bottom = C.bold_mem(f"  ╚{'═' * width}")
-
-        safe_print(top)
-        safe_print(header)
-        safe_print(sep)
-        # 各行に左余白をつけてレンダリング
-        rendered = render_markdown(text)
-        for line in rendered.splitlines():
-            safe_print(f"  {C.mem('║')}  {line}")
-        safe_print(bottom)
-        safe_print("")
-
-    # ── 承認確認ユーティリティ ───────────────────────────────────
-
-    @staticmethod
-    def _ask_approval(prompt_text: str) -> bool:
-        """ユーザーに y/N で確認し、True=承認 / False=否決 を返す。"""
-        safe_print(C.yellow("  ┌─ 実行確認 ──────────────────────────────────────"))
-        safe_print(C.yellow(f"  │  {prompt_text}"))
-        safe_print(C.yellow("  └──────────────────────────────────────────────────"))
-        safe_print(C.bold_green("  実行しますか？ [y/N]: "), end="", flush=True)
-        try:
-            return sys.stdin.readline().strip().lower() == "y"
-        except (EOFError, KeyboardInterrupt):
-            return False
-
-    @staticmethod
-    def _rollback_thinker_history(thinker: "MistralThinker") -> None:  # type: ignore[name-defined]
-        """直前の user+assistant ペアを会話履歴から取り消す（否決時）。"""
-        for _ in range(2):
-            if thinker.conversation:
-                thinker.conversation.pop()
-
-    # ── ステップ計画の表示 ───────────────────────────────────────
-
-    @staticmethod
-    def _print_plan(steps: list[dict]) -> None:
-        """計画ステップを Aqua 枠で一覧表示する。"""
-        safe_print(C.bold_mem(f"  ╔{'═' * 54}"))
-        safe_print(C.bold_mem(f"  ║  ✦ 実行計画 ({len(steps)} ステップ)"))
-        safe_print(C.mem(f"  ╟{'─' * 54}"))
-        for i, s in enumerate(steps, 1):
-            label = f"  [{s['label']}]" if s.get("label") else ""
-            on_f  = s.get("on_failure", "retry")
-            flag  = C.yellow(f" ⚠on_failure:{on_f}") if on_f != "retry" else ""
-            safe_print(f"  {C.mem('║')}  {C.bold_mem(f'Step {i}')}{C.mem(label)}{flag}")
-            safe_print(f"  {C.mem('║')}    {s['description']}")
-        safe_print(C.bold_mem(f"  ╚{'═' * 54}\n"))
-
-    def _wait_cooldown(self) -> None:
-        """
-        前回の Thinker 呼び出しから _THINKER_COOLDOWN 秒が経過するまで待機する。
-        Actor の実行時間が既に40秒を超えていれば即通過。
-        呼び出し元で Thinker 呼び出し完了後に _last_thinker_call を更新すること。
-        """
-        elapsed = time.time() - self._last_thinker_call
-        wait = self._THINKER_COOLDOWN - elapsed
-        if wait > 0.5:
-            safe_print(C.yellow(f"  ⏳ Thinker冷却中... {wait:.0f}秒"), flush=True)
-            time.sleep(wait)
-
-    # ── ワークフロー実行 ─────────────────────────────────────────
-
-    MAX_STEP_RETRY    = 2     # 1ステップあたりの最大リトライ回数
-    _THINKER_COOLDOWN = 40.0  # Mistral RPM 2制限に対する安全冷却時間（秒）
-    MAX_REPLAN_COUNT  = 5     # replan の最大回数（無限ループ防止）
-
-    def _execute_workflow_plan(self, steps: list[dict]) -> str:
-        """
-        WorkflowGraph を構築して各ステップを Actor で実行する。
-        on_failure / on_success の分岐・retry・abort・goto を処理する。
-        各ステップのサマリーを結合して返す。
-        """
-        # PlanStep リストを構築
-        plan_steps = [
-            PlanStep(
-                index         = i,
-                description   = s["description"],
-                parallel      = False,  # 常に逐次（安全のため）
-                label         = s.get("label", ""),
-                on_failure    = s.get("on_failure", "retry"),
-                on_success    = s.get("on_success", ""),
-                max_iterations= s.get("max_iterations", 0),
-            )
-            for i, s in enumerate(steps)
-        ]
-        graph = WorkflowGraph(plan_steps)
-        total = len(plan_steps)
-        all_summaries: list[str] = []
-
-        cursor = 0
-        while cursor < total:
-            step = plan_steps[cursor]
-            retry_count = 0
-
-            while True:  # retry ループ
-                step.status = "running"
-                safe_print(
-                    C.bold_mem(f"\n  ┌─ Step {cursor + 1}/{total}: {step.description[:60]}"),
-                    flush=True,
-                )
-
-                # Actor 実行
-                self.actor_orch.agent.clear_history()
-                try:
-                    result = self.actor_orch.run_react(step.description)
-                    step.result = result
-                    graph.parse_state_updates(result)
-                except KeyboardInterrupt:
-                    safe_print(C.yellow("\n\n  [割り込み] Ctrl+C — ワークフローを中断します。"), flush=True)
-                    step.status = "failed"
-                    return "\n".join(all_summaries) + "\n[Ctrl+C により中断]"
-                except UserRejectedWriteError:
-                    safe_print(C.yellow("\n  ✋ 書き込みを拒否しました。ワークフローを中断します。"), flush=True)
-                    step.status = "failed"
-                    return "\n".join(all_summaries) + "\n[書き込み拒否により中断]"
-                except Exception as e:
-                    result = f"エラー: {e}"
-                    step.result = result
-                    step.status = "failed"
-
-                # 成功 / 失敗の判定（エラー文字列で簡易判定）
-                failed = result.startswith("エラー:") or result.startswith("ツール実行エラー:")
-
-                if not failed:
-                    step.status = "done"
-                    safe_print(C.mem(f"  └─ ✓ 完了"), flush=True)
-                    all_summaries.append(f"[Step {cursor + 1}] ✓ {step.description[:40]}\n{result[:200]}")
-
-                    action, goto_idx = graph.resolve_success(step)
-                    if action == "abort":
-                        safe_print(C.yellow("  ワークフローを正常終了します（on_success: abort）"), flush=True)
-                        return "\n".join(all_summaries)
-                    if action == "goto" and goto_idx is not None:
-                        cursor = goto_idx
-                        break
-                    cursor += 1
-                    break
-
-                else:
-                    step.status = "failed"
-                    safe_print(C.yellow(f"  └─ ✗ 失敗: {result[:80]}"), flush=True)
-                    all_summaries.append(f"[Step {cursor + 1}] ✗ {step.description[:40]}\n{result[:200]}")
-
-                    action, goto_idx = graph.resolve_failure(step)
-
-                    if action == "retry" and retry_count < self.MAX_STEP_RETRY:
-                        retry_count += 1
-                        step.status = "retrying"
-                        safe_print(C.yellow(f"  リトライ ({retry_count}/{self.MAX_STEP_RETRY})..."), flush=True)
-                        continue
-
-                    if action == "skip" or (action == "retry" and retry_count >= self.MAX_STEP_RETRY):
-                        step.status = "skipped"
-                        safe_print(C.gray("  スキップして次のステップへ"), flush=True)
-                        cursor += 1
-                        break
-
-                    if action == "abort":
-                        safe_print(C.red("  ✗ abort: ワークフローを中断します。"), flush=True)
-                        return "\n".join(all_summaries) + "\n[abort により中断]"
-
-                    if action == "goto" and goto_idx is not None:
-                        cursor = goto_idx
-                        break
-
-                    # フォールスルー
-                    cursor += 1
-                    break
-
-        return "\n".join(all_summaries)
-
-    # ── 適応型ワークフロー実行 ───────────────────────────────────
-
-    def _execute_adaptive_workflow(
-        self,
-        steps: list[dict],
-        original_goal: str,
-    ) -> str:
-        """
-        毎ステップ実行後に Thinker が結果を評価し、残りの計画を動的に修正する。
-
-        各ステップ後のフロー:
-          continue → 残りをそのまま続行
-          replan   → 残りのステップを Thinker の新計画で差し替え（MAX_REPLAN_COUNT 上限）
-          done     → 全体ゴール達成と判断してループ終了
-        """
-        remaining: list[dict] = list(steps)
-        executed_log: list[dict] = []
-        all_summaries: list[str] = []
-        replan_count = 0
-        step_num = 0
-
-        while remaining:
-            step_dict = remaining.pop(0)
-            step_num += 1
-            total_remaining = len(remaining)
-
-            step = PlanStep(
-                index          = step_num,
-                description    = step_dict.get("description", ""),
-                label          = step_dict.get("label", ""),
-                on_failure     = step_dict.get("on_failure", "retry"),
-                on_success     = step_dict.get("on_success", ""),
-                max_iterations = step_dict.get("max_iterations", 0),
-            )
-            graph = WorkflowGraph([step])
-
-            retry_count = 0
-            step_result = ""
-
-            while True:  # retry ループ
-                step.status = "running"
-                safe_print(
-                    C.bold_mem(
-                        f"\n  ┌─ Step {step_num} (残り{total_remaining}): "
-                        f"{step.description[:60]}"
-                    ),
-                    flush=True,
-                )
-
-                # Actor 実行
-                self.actor_orch.agent.clear_history()
-                try:
-                    step_result = self.actor_orch.run_react(step.description)
-                    step.result = step_result
-                    graph.parse_state_updates(step_result)
-                except KeyboardInterrupt:
-                    safe_print(C.yellow("\n\n  [割り込み] Ctrl+C — ワークフローを中断します。"), flush=True)
-                    step.status = "failed"
-                    return "\n".join(all_summaries) + "\n[Ctrl+C により中断]"
-                except UserRejectedWriteError:
-                    safe_print(C.yellow("\n  ✋ 書き込みを拒否しました。ワークフローを中断します。"), flush=True)
-                    step.status = "failed"
-                    return "\n".join(all_summaries) + "\n[書き込み拒否により中断]"
-                except Exception as e:
-                    step_result = f"エラー: {e}"
-                    step.result = step_result
-                    step.status = "failed"
-
-                # 即時失敗判定（on_failure で静的処理）
-                failed = (
-                    step_result.startswith("エラー:")
-                    or step_result.startswith("ツール実行エラー:")
-                )
-                if failed:
-                    step.status = "failed"
-                    safe_print(C.yellow(f"  └─ ✗ 失敗: {step_result[:80]}"), flush=True)
-                    all_summaries.append(
-                        f"[Step {step_num}] ✗ {step.description[:40]}\n{step_result[:200]}"
-                    )
-                    action, _ = graph.resolve_failure(step)
-
-                    if action == "retry" and retry_count < self.MAX_STEP_RETRY:
-                        retry_count += 1
-                        step.status = "retrying"
-                        safe_print(C.yellow(f"  リトライ ({retry_count}/{self.MAX_STEP_RETRY})..."), flush=True)
-                        continue
-
-                    if action == "abort":
-                        safe_print(C.red("  ✗ abort: ワークフローを中断します。"), flush=True)
-                        return "\n".join(all_summaries) + "\n[abort により中断]"
-
-                    # skip or retry上限超過 → スキップして Thinker 評価もスキップ
-                    step.status = "skipped"
-                    safe_print(C.gray("  スキップして次のステップへ"), flush=True)
-                    break
-
-                # 成功
-                step.status = "done"
-                safe_print(C.mem(f"  └─ ✓ 完了"), flush=True)
-                all_summaries.append(
-                    f"[Step {step_num}] ✓ {step.description[:40]}\n{step_result[:200]}"
-                )
-                executed_log.append({
-                    "description": step.description,
-                    "result":      step_result[:300],
-                })
-                break  # retry ループ終了
-
-            # 失敗/スキップは Thinker 評価をスキップ（on_failure で静的処理済み）
-            if step.status in ("failed", "skipped"):
-                continue
-
-            # ── Thinker: ステップ評価（冷却後）──────────────────────
-            safe_print(C.bold_green(f"\n  ✦ [Thinker] ステップ評価中..."), flush=True)
-            self._wait_cooldown()
-            try:
-                decision = self.thinker.step_review(
-                    original_goal   = original_goal,
-                    just_executed   = step.description,
-                    step_result     = step_result,
-                    remaining_steps = remaining,
-                    executed_log    = executed_log,
-                )
-            except Exception as e:
-                safe_print(C.yellow(f"  ⚠ Thinker step_review エラー: {e} → continue"), flush=True)
-                decision = {"action": "continue", "reason": str(e)}
-            finally:
-                self._last_thinker_call = time.time()
-
-            action = decision.get("action", "continue")
-            reason = decision.get("reason", "")
-
-            if action == "continue":
-                safe_print(C.mem(f"  → 続行: {reason}"), flush=True)
-
-            elif action == "replan":
-                if replan_count < self.MAX_REPLAN_COUNT:
-                    replan_count += 1
-                    new_steps = decision.get("steps", [])
-                    remaining = new_steps
-                    safe_print(
-                        C.bold_mem(
-                            f"\n  ↻ 計画を修正します "
-                            f"(replan {replan_count}/{self.MAX_REPLAN_COUNT})"
-                        ),
-                        flush=True,
-                    )
-                    safe_print(C.mem(f"  理由: {reason}"), flush=True)
-                    self._print_plan(remaining)
-                else:
-                    safe_print(
-                        C.yellow(f"  ⚠ replan 上限({self.MAX_REPLAN_COUNT})に達しました → 続行"),
-                        flush=True,
-                    )
-
-            elif action == "done":
-                safe_print(C.bold_green(f"  ✦ [Thinker] タスク完了: {reason}"), flush=True)
-                break
-
-        return "\n".join(all_summaries)
-
-    # ── メインエントリポイント ────────────────────────────────────
-
-    def run(self, user_message: str) -> str:
-        """
-        Dual モードのメインループ（案 A: WorkflowGraph ベース）。
-
-        1. Thinker が JSON ステップ計画を生成
-        2. ユーザーが計画を承認
-        3. WorkflowGraph が各ステップを Actor で実行
-        4. Thinker が全結果をレビュー
-        5. ユーザーに制御を返す
-        """
-        safe_print(C.cyan(f"\n  {'─'*20} Dual Mode {'─'*20}"), flush=True)
-
-        # ── 1. Thinker: ステップ計画を生成（冷却タイマー適用）───
-        safe_print(C.bold_green("\n  ✦ [Thinker] 実行計画を生成中..."), flush=True)
-        self._wait_cooldown()
-        try:
-            steps = self.thinker.plan(user_message)
-        except Exception as e:
-            safe_print(C.red(f"\n  ✗ Thinker エラー: {e}"), flush=True)
-            return f"Thinker エラー: {e}"
-        finally:
-            self._last_thinker_call = time.time()
-
-        if not steps:
-            safe_print(C.red(
-                "  ✗ 計画のJSONパースに失敗しました。\n"
-                "  Mistralの出力が正しいJSON形式でなかった可能性があります。\n"
-                "  もう一度同じ指示を入力するか、指示を言い換えてみてください。"
-            ), flush=True)
-            return "計画生成失敗"
-
-        # ── 2. 計画を表示してユーザー承認 ───────────────────────
-        self._print_plan(steps)
-
-        if not self._ask_approval(f"{len(steps)} ステップの計画を実行しますか？"):
-            safe_print(C.gray("  否決しました。新しい指示を入力してください。"), flush=True)
-            self.thinker.conversation.append({
-                "role": "user",
-                "content": "[ユーザーが上記の計画を否決しました。次の指示で別のアプローチを検討してください。]"
-            })
-            return ""
-
-        # ── 3. 適応型ワークフローで全ステップを実行 ─────────────
-        safe_print(C.bold_green("\n  ⚡ [AdaptiveWorkflow] 実行開始..."), flush=True)
-        all_summaries = self._execute_adaptive_workflow(steps, user_message)
-
-        # ── 4. Thinker: 最終サマリーレビュー（冷却タイマー適用）─
-        safe_print(C.bold_green("\n  ✦ [Thinker] 最終レビュー中..."), flush=True)
-        self._wait_cooldown()
-        try:
-            review = self.thinker.review(all_summaries)
-        except Exception as e:
-            safe_print(C.red(f"\n  ✗ Thinker レビューエラー: {e}"), flush=True)
-            return all_summaries
-        finally:
-            self._last_thinker_call = time.time()
-
-        safe_print(C.gray("  次の指示を入力してください（完了なら exit）"), flush=True)
-        return review
+# (DualModelOrchestrator は削除済み — Plan モードに統合)

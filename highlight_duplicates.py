@@ -53,34 +53,48 @@ def main():
     print(f"  → ヘッダー: '{header}'")
     print(f"  → データ行数: {len(data_values)}")
 
-    # 各値の出現回数をカウント
-    counter = Counter(data_values)
+    # 2つ目以降の出現のみを対象（初出はスキップ）
+    seen = set()
+    duplicate_rows = []
+    for idx, val in enumerate(data_values):
+        if val.strip() == "":
+            continue
+        if val in seen:
+            duplicate_rows.append(idx + 2)  # +2: 0-indexed → 1-based、ヘッダー1行分
+        else:
+            seen.add(val)
 
-    # 重複している値（出現回数 >= 2）を特定
-    duplicate_values = {val for val, cnt in counter.items() if cnt >= 2 and val.strip() != ""}
+    duplicate_values = set()  # 件数表示用
 
-    if not duplicate_values:
+    if not duplicate_rows:
         print("  → 重複IDは見つかりませんでした。処理終了。")
         return
 
-    # 重複値が存在する行番号を収集（スプレッドシート行番号は1-based、ヘッダーが1行目なので+1）
-    duplicate_rows = []
-    for idx, val in enumerate(data_values):
-        if val in duplicate_values:
-            duplicate_rows.append(idx + 2)  # +2: 0→2, 1→3, ... (ヘッダー行1を除く)
+    print(f"  → 塗りつぶし対象セル数（2つ目以降）: {len(duplicate_rows)} セル")
 
-    print(f"  → 重複IDの種類: {len(duplicate_values)} 種類")
-    print(f"  → 塗りつぶし対象セル数: {len(duplicate_rows)} セル")
+    # 4. A列全体の背景色をリセットしてから、2つ目以降だけ赤く塗る
+    print("\n[4/4] A列の背景色をリセット後、重複セルを赤色で塗りつぶし中...")
 
-    # 重複IDの一部を表示（最大10件）
-    dup_list = list(duplicate_values)
-    preview = dup_list[:10]
-    print(f"  → 重複ID例: {preview}")
-    if len(dup_list) > 10:
-        print(f"    ... 他 {len(dup_list) - 10} 件")
-
-    # 4. 重複セルを赤く塗る
-    print("\n[4/4] 重複セルを赤色で塗りつぶし中...")
+    # A列全体をリセット（白に戻す）
+    reset_request = {
+        "repeatCell": {
+            "range": {
+                "sheetId": worksheet.id,
+                "startRowIndex": 1,  # ヘッダー除く
+                "endRowIndex": total_rows,
+                "startColumnIndex": 0,
+                "endColumnIndex": 1,
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}
+                }
+            },
+            "fields": "userEnteredFormat.backgroundColor",
+        }
+    }
+    worksheet.spreadsheet.batch_update({"requests": [reset_request]})
+    print("  → A列背景色リセット完了")
 
     # バッチ処理（API呼び出しを減らすため範囲をまとめる）
     # 個別セル指定で format を適用
@@ -129,8 +143,7 @@ def main():
         print(f"  → バッチ {batch_num}/{total_batches} 完了 ({len(batch)} セル)")
 
     print(f"\n=== 処理完了 ===")
-    print(f"  重複IDの種類: {len(duplicate_values)} 種類")
-    print(f"  赤く塗ったセル数: {len(duplicate_rows)} セル")
+    print(f"  赤く塗ったセル数（2つ目以降の重複）: {len(duplicate_rows)} セル")
     print(f"  対象シート: {SHEET_NAME}")
 
 

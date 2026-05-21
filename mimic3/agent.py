@@ -629,6 +629,97 @@ class OpenRouterAgent:
 
         return result, call_id
 
+    def run_stream(self, user_message: str, callback=None) -> str:
+        """Interactive モードと同じ表示エンジン（ストリーミング + PipelineTypewriter）で
+        ReAct ループを実行する。callback は後方互換のために受け取るが使用しない。"""
+        from .utils import PipelineTypewriter
+        from .tools import clear_read_files_registry, UserRejectedWriteError
+        from uuid import uuid4
+
+        clear_read_files_registry()
+        self._compact_if_needed()
+
+        ctx_parts = [p for p in [self._build_context_header(), self._task_context()] if p]
+        injected = ("\n\n".join(ctx_parts) + "\n\n" + user_message) if ctx_parts else user_message
+
+        messages: list[dict] = list(self.conversation)
+        old_conv_len = len(self.conversation)
+        messages.append({"role": "user", "content": injected})
+
+        write_tools = {"write_file", "edit_file", "patch_file", "delete_file"}
+
+        for _ in range(MAX_TOOL_ROUNDS):
+            _tw = PipelineTypewriter()
+            _tw.start()
+            text, tool_calls = self._stream_react_call(messages, text_callback=_tw.feed)
+            _tw.finalize()
+
+            if text == "__interrupted__":
+                return "処理を中断しました。"
+
+            if not tool_calls:
+                final = text or "(応答なし)"
+                self.conversation.append({"role": "user", "content": user_message})
+                self.conversation.extend(messages[old_conv_len + 1:])
+                self.conversation.append({"role": "assistant", "content": final})
+                return final
+
+            messages.append({
+                "role": "assistant",
+                "content": text or None,
+                "tool_calls": [
+                    {
+                        "id": tc.get("id") or f"call_{tc['name']}_{uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc.get("args", {}), ensure_ascii=False),
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            })
+
+            for tc in tool_calls:
+                fn_name = tc.get("name", "")
+                fn_args = tc.get("args", {})
+                call_id = tc.get("id") or f"call_{fn_name}_{uuid4().hex[:8]}"
+
+                safe_print(
+                    f"  {C.bold_green('⚙')} {C.green(fn_name)}"
+                    + C.cyan(f"({', '.join(f'{k}={repr(v)[:40]}' for k, v in fn_args.items())})"),
+                    flush=True,
+                )
+
+                if fn_name in ("write_file", "edit_file", "patch_file"):
+                    _print_write_diff(fn_name, fn_args)
+
+                try:
+                    result = self.tools.execute(fn_name, fn_args)
+                    result_str = cache_tool_output(fn_name, str(result))
+                    if fn_name in _CACHEABLE_TOOLS:
+                        cache_key = self._make_cache_key(fn_name, fn_args)
+                        self._tool_cache[cache_key] = result_str
+                    elif fn_name in write_tools:
+                        self._invalidate_cache_for_path(fn_args.get("path", ""))
+                except UserRejectedWriteError:
+                    raise
+                except Exception as e:
+                    result_str = f"ツール実行エラー: {fn_name}: {e}"
+                    safe_print(C.red(f"\n  ✗ [{fn_name}] エラー: {e}"), flush=True)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": result_str,
+                })
+
+        fallback = f"(ReActループ上限 {MAX_TOOL_ROUNDS} ターンに達しました)"
+        self.conversation.append({"role": "user", "content": user_message})
+        self.conversation.extend(messages[old_conv_len + 1:])
+        self.conversation.append({"role": "assistant", "content": fallback})
+        return fallback
+
     def run(self, user_message: str) -> str:
         """ReAct ループを実行して最終回答を返す。"""
         from .tools import clear_read_files_registry
