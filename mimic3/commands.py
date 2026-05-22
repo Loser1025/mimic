@@ -18,10 +18,9 @@ from .agent import OpenRouterAgent
 cmd_registry = ExecutionRegistry()
 
 MODEL_LIST = [
-    ("1", "openrouter/owl-alpha",            "OwlAlpha         — ツール使用特化・無料"),
-    ("2", "google/gemma-3-27b-it:free",      "Gemma 3 27B      — 高精度・無料"),
-    ("3", "meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B — 汎用・無料"),
-    ("4", "deepseek/deepseek-chat-v3-0324:free",    "DeepSeek V3   — コーディング強・無料"),
+    ("1", "openrouter/owl-alpha",                  "OwlAlpha         — エージェント特化・1Mコンテキスト・無料"),
+    ("2", "nvidia/nemotron-3-super-120b-a12b:free","Nemotron 3 Super — SWE-Bench 60%・推論強・1Mコンテキスト・無料"),
+    ("3", "openai/gpt-oss-120b:free",              "gpt-oss-120b     — OSS最高コーディング・高速・無料"),
 ]
 
 @cmd_registry.register("status", "レート制限状態を表示")
