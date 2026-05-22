@@ -521,9 +521,9 @@ class OpenRouterAgent:
 
                 return full_text, tool_calls_list
 
-            except RateLimitError:
+            except RateLimitError as e:
                 backoff = min(BASE_BACKOFF * (2 ** attempt) + random.uniform(0, 1), MAX_BACKOFF)
-                safe_print(C.yellow(f"  ⚠ 429 → {backoff:.0f}秒待機"), flush=True)
+                safe_print(C.yellow(f"  ⚠ 429 → {backoff:.0f}秒待機 ({e.message[:80]})"), flush=True)
                 time.sleep(backoff)
                 attempt += 1
 
