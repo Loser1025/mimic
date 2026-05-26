@@ -17,12 +17,6 @@ from .agent import OpenRouterAgent
 
 cmd_registry = ExecutionRegistry()
 
-MODEL_LIST = [
-    ("1", "openrouter/owl-alpha",                  "OwlAlpha         — エージェント特化・1Mコンテキスト・無料"),
-    ("2", "nvidia/nemotron-3-super-120b-a12b:free","Nemotron 3 Super — SWE-Bench 60%・推論強・1Mコンテキスト・無料"),
-    ("3", "openai/gpt-oss-120b:free",              "gpt-oss-120b     — OSS最高コーディング・高速・無料"),
-]
-
 @cmd_registry.register("status", "レート制限状態を表示")
 def cmd_status(agent: OpenRouterAgent, args: str):
     agent.print_status()
@@ -63,34 +57,29 @@ def cmd_think(agent: OpenRouterAgent, args: str):
                    f"  (プロンプト指示: {prompt_mark})")
         safe_print(C.gray("  切替: /think on  または  /think off"))
 
-@cmd_registry.register("model", "モデルの確認・切替 (/model 1|2|<名前>)")
+@cmd_registry.register("model", "モデルの確認・変更 (/model → ライブ選択  /model <名前> → 直接指定)")
 def cmd_model(agent: OpenRouterAgent, args: str):
-    if not args:
-        current = agent.rotator.accounts[0].model
-        safe_print("  利用可能なモデル:")
-        for num, name, desc in MODEL_LIST:
-            marker = " <<" if name == current else ""
-            safe_print(f"    {num}: {desc}{marker}")
-        safe_print("  切替例: /model 1")
+    current = agent._config.model
+    arg = args.strip()
+
+    if not arg:
+        # 引数なし → 起動時と同じライブセレクタを起動
+        from .config import select_model_interactively
+        new_model = select_model_interactively(agent._config.api_keys[0], current)
+        if new_model != current:
+            agent._config.model = new_model
+            agent.clear_history()
+            safe_print(C.green(f"  ✓ モデルを変更しました: {new_model}"))
+            safe_print(C.gray("  会話履歴をリセットしました。"))
+        else:
+            safe_print(C.gray(f"  モデルは変更されませんでした: {current}"))
         return
-    matched = None
-    for num, name, desc in MODEL_LIST:
-        if args == num or args == name:
-            matched = (name, desc)
-            break
-    if matched:
-        new_model, desc = matched
-        for acc in agent.rotator.accounts:
-            acc.model = new_model
-        agent.clear_history()
-        safe_print(f"  モデル変更: {desc}")
-        safe_print("  会話履歴をリセットしました。")
-    else:
-        for acc in agent.rotator.accounts:
-            acc.model = args
-        agent.clear_history()
-        safe_print(f"  モデルを変更しました: {args}")
-        safe_print("  会話履歴をリセットしました。")
+
+    # 引数あり → モデル名を直接指定
+    agent._config.model = arg
+    agent.clear_history()
+    safe_print(C.green(f"  ✓ モデルを変更しました: {arg}"))
+    safe_print(C.gray("  会話履歴をリセットしました。"))
 
 @cmd_registry.register("cd", "作業フォルダの確認・変更 (/cd <パス>)")
 def cmd_cd(agent: OpenRouterAgent, args: str):
