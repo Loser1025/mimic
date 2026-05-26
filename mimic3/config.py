@@ -193,81 +193,146 @@ def select_model_interactively(api_key: str, current_model: str) -> str:
     import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    print("\n  無料モデル一覧を取得中...", end="", flush=True)
-    models = fetch_free_models(api_key)
+    # Inline ANSI (avoids circular import with utils)
+    _RG  = "\033[38;2;0;255;0m"
+    _RGD = "\033[38;2;0;64;0m"
+    _WHT = "\033[38;2;220;255;220m"
+    _GRY = "\033[38;2;80;120;80m"
+    _CYN = "\033[38;2;0;255;180m"
+    _YLW = "\033[38;2;140;255;0m"
+    _MEM = "\033[38;2;0;230;255m"
+    _BLD = "\033[1m"
+    _RST = "\033[0m"
 
-    if not models:
-        print("\n  現在のモデルを継続使用します。")
-        return current_model
+    def g(s):  return f"{_RG}{s}{_RST}"
+    def gd(s): return f"{_RGD}{s}{_RST}"
+    def w(s):  return f"{_WHT}{s}{_RST}"
+    def cy(s): return f"{_CYN}{s}{_RST}"
+    def y(s):  return f"{_YLW}{s}{_RST}"
+    def mm(s): return f"{_MEM}{s}{_RST}"
+    def gr(s): return f"{_GRY}{s}{_RST}"
+    def bg(s): return f"{_BLD}{_RG}{s}{_RST}"
+    def bw(s): return f"{_BLD}{_WHT}{s}{_RST}"
 
-    total = len(models)
-    print(f"\r  {total} 件取得。疎通確認中（並列リクエスト送信）...\n", flush=True)
-
-    results: dict[str, tuple[bool, float]] = {}
-    lock = threading.Lock()
-    tested = [0]
-
-    def _test_one(m):
-        model_id = m["id"]
-        ok, elapsed = _test_model(api_key, model_id)
-        with lock:
-            results[model_id] = (ok, elapsed)
-            tested[0] += 1
-            print(f"\r  確認中... {tested[0]}/{total}  ", end="", flush=True)
-
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        futures = [ex.submit(_test_one, m) for m in models]
-        for f in as_completed(futures):
-            f.result()
-
+    # ── ヘッダー ──────────────────────────────────────────────────
+    BW = 74
+    print()
+    print(gd("  ╔" + "═" * BW + "╗"))
+    title = "  FREE MODEL SELECTOR  ·  LIVE API HEALTH CHECK  "
+    print(f"{gd('  ║')}{_BLD}{_RG}{title}{_RST}{' ' * (BW - len(title))}{gd('║')}")
+    print(gd("  ╚" + "═" * BW + "╝"))
     print()
 
-    working = [
-        (m, results[m["id"]][1])
-        for m in models
-        if results.get(m["id"], (False,))[0]
-    ]
-    working.sort(key=lambda x: x[1])  # 応答時間が速い順
+    # ── フェーズ1: モデル一覧取得 ────────────────────────────────
+    print(f"  {gr('⟳')}  無料モデル一覧を取得中...", end="", flush=True)
+    models = fetch_free_models(api_key)
+    if not models:
+        print(f"\r  {y('⚠')}  モデル一覧の取得に失敗。現在のモデルを継続使用します。{' ' * 10}")
+        return current_model
+    total = len(models)
+    print(f"\r  {g('✓')}  {w(str(total))} 件のモデルを取得しました{' ' * 25}\n")
 
+    # ── フェーズ2: 疎通確認（プログレスバー） ───────────────────
+    print(f"  {gr('実際にリクエストを送信して応答確認中（並列）...')}\n")
+    results: dict[str, tuple[bool, float]] = {}
+    tested_n = [0]
+    lock = threading.Lock()
+    BAR = 34
+
+    def _test_one(mdl):
+        mid = mdl["id"]
+        ok, elapsed = _test_model(api_key, mid)
+        with lock:
+            results[mid] = (ok, elapsed)
+            tested_n[0] += 1
+            n = tested_n[0]
+            filled = int(BAR * n / total)
+            bar = f"{_RG}{'█' * filled}{_GRY}{'░' * (BAR - filled)}{_RST}"
+            tw = len(str(total))
+            print(f"\r  [{bar}]  {w(str(n).rjust(tw))}/{total}  {gr(str(int(100 * n / total)).rjust(3) + '%')}", end="", flush=True)
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        for f in as_completed([ex.submit(_test_one, mdl) for mdl in models]):
+            f.result()
+    print(f"\r{' ' * 80}\r", end="", flush=True)
+
+    working = sorted(
+        [(mdl, results[mdl["id"]][1]) for mdl in models if results.get(mdl["id"], (False,))[0]],
+        key=lambda x: x[1],
+    )
     if not working:
-        print("  ⚠ 疎通確認できたモデルがありませんでした。現在のモデルを使用します。")
+        print(f"  {y('⚠')}  疎通できたモデルがありませんでした。現在のモデルを使用します。\n")
         return current_model
 
-    sep = "  " + "─" * 76
-    print(f"\n  稼働中のモデル: {len(working)} 件 / {total} 件\n")
-    print(sep)
-    print(f"  {'No.':<5} {'モデルID':<50} {'応答時間':>6}  {'コンテキスト長':>12}")
-    print(sep)
+    # ── フェーズ3: 結果テーブル ──────────────────────────────────
+    CN, CID, CLAT, CCTX = 4, 48, 7, 9
 
-    for i, (m, elapsed) in enumerate(working, 1):
-        model_id = m.get("id", "")
-        ctx = m.get("context_length", 0)
-        ctx_str = f"{ctx:,}" if ctx else "-"
-        marker = " ← 現在" if model_id == current_model else ""
-        print(f"  {i:<5} {model_id:<50} {elapsed:>5.1f}s  {ctx_str:>12}{marker}")
+    def ctx_fmt(ctx):
+        if not ctx:          return "─"
+        if ctx >= 1_000_000: return f"{ctx // 1_000_000}M"
+        if ctx >= 1_000:     return f"{ctx // 1_000}K"
+        return str(ctx)
 
-    print(sep)
-    print(f"  0: キャンセル（現在のモデル '{current_model}' を使用）\n")
+    def lat_col(e, rank):
+        s = f"{e:.1f}s".center(CLAT)
+        if rank == 0:  return f"{_BLD}{_RG}{s}{_RST}"
+        if e < 3.0:    return f"{_CYN}{s}{_RST}"
+        if e < 8.0:    return f"{_YLW}{s}{_RST}"
+        return f"{_GRY}{s}{_RST}"
+
+    EQ = "═"
+    def hline(lc, rc, jc):
+        return gd(lc + EQ*(CN+2) + jc + EQ*(CID+2) + jc + EQ*(CLAT+2) + jc + EQ*(CCTX+2) + rc)
+
+    V = gd("║")
+    print(f"  {bw(str(len(working)))} 件が稼働中  {gr('/')}  {gr(str(total) + ' 件取得')}\n")
+    print(hline("╔", "╗", "╦"))
+    print(f"{V} {bw('No.'.center(CN))} {V} {bw('Model ID'.ljust(CID))} {V} {bw('Latency'.center(CLAT))} {V} {bw('Context'.center(CCTX))} {V}")
+    print(hline("╠", "╣", "╬"))
+
+    for i, (mdl, elapsed) in enumerate(working, 1):
+        mid    = mdl.get("id", "")
+        ctx    = mdl.get("context_length", 0)
+        is_cur = mid == current_model
+        is_top = i == 1
+
+        no_p  = str(i).center(CN)
+        id_p  = mid[:CID].ljust(CID)
+        lat_d = lat_col(elapsed, i - 1)
+        ctx_d = mm(ctx_fmt(ctx).rjust(CCTX))
+
+        if is_top and is_cur:
+            no_d, id_d, tag = bg(no_p), bg(id_p), f"  {bg('★ FASTEST · CURRENT')}"
+        elif is_top:
+            no_d, id_d, tag = bg(no_p), bg(id_p), f"  {bg('★ FASTEST')}"
+        elif is_cur:
+            no_d, id_d, tag = cy(no_p), cy(id_p), f"  {cy('← CURRENT')}"
+        else:
+            no_d, id_d, tag = gr(no_p), w(id_p), ""
+
+        print(f"{V} {no_d} {V} {id_d} {V} {lat_d} {V} {ctx_d} {V}{tag}")
+
+    print(hline("╚", "╝", "╩"))
+    print(f"\n  {gd('[ 0 ]')}  {gr('キャンセル')}  {gr('·')}  {gr('現在のモデル:')}  {y(current_model)}\n")
 
     while True:
         try:
-            raw = input("  番号を入力 > ").strip()
+            raw = input(f"  {g('▸')}  番号を入力  {gd('›')}  ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return current_model
-
-        if raw == "" or raw == "0":
+        if raw in ("", "0"):
             return current_model
         try:
             n = int(raw)
         except ValueError:
-            print(f"  ⚠ 数字を入力してください（0〜{len(working)}）。")
+            print(f"  {y('⚠')}  数字を入力してください（0〜{len(working)}）。")
             continue
         if 1 <= n <= len(working):
             selected = working[n - 1][0]["id"]
-            print(f"  ✓ モデルを選択: {selected}\n")
+            print(f"\n  {bg('✓')}  {w('選択完了:')}  {g(selected)}\n")
             return selected
-        print(f"  ⚠ 1〜{len(working)} の番号を入力してください。")
+        print(f"  {y('⚠')}  1〜{len(working)} の番号を入力してください。")
 
 
 # ── .env パーサー ────────────────────────────────────────────────
