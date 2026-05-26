@@ -453,14 +453,18 @@ class PipelineTypewriter:
       Stage3: タイプライタースレッドが1文字ずつ出力（80文字/秒）
     コードブロックが途中の場合は閉じるまでバッファを保持する。
     auto_mode=True のときは即時出力（遅延なし・レンダリングなし）。
+    <think>...</think> ブロックはグレーのボックスで別レンダリングする。
     """
     _CHARS_PER_SEC = 500
     _BUFFER_SIZE   = 200
 
     def __init__(self, auto_mode: bool = False, renderer=None):
-        self._auto_mode = auto_mode
-        self._renderer  = renderer or render_markdown
-        self._raw_buf   = ""
+        self._auto_mode        = auto_mode
+        self._renderer         = renderer or render_markdown
+        self._raw_buf          = ""
+        self._think_raw_buf    = ""
+        self._think_aware      = ThinkAwareBuffer()
+        self._in_think_display = False
         self._disp_q: collections.deque = collections.deque()
         self._full: list[str] = []
         self._done  = False
@@ -492,6 +496,35 @@ class PipelineTypewriter:
                 rendered += "\n"
             self._disp_q.extend(rendered)
 
+    def _enter_think(self):
+        header = f"{C._GRAY}╭─ 💭 思考中 {'─' * 50}{C.RESET}\n"
+        self._disp_q.extend(header)
+        self._in_think_display = True
+
+    def _flush_think_raw(self, force: bool = False):
+        if not self._think_raw_buf:
+            return
+        last_nl = self._think_raw_buf.rfind("\n")
+        if force or last_nl == -1:
+            to_render = self._think_raw_buf
+            self._think_raw_buf = ""
+        else:
+            to_render = self._think_raw_buf[:last_nl + 1]
+            self._think_raw_buf = self._think_raw_buf[last_nl + 1:]
+        if not to_render:
+            return
+        rendered = render_markdown_thinker(to_render)
+        result = ""
+        for line in rendered.split("\n"):
+            result += f"{C._GRAY}│{C.RESET} {line}\n"
+        self._disp_q.extend(result)
+
+    def _exit_think(self):
+        self._flush_think_raw(force=True)
+        footer = f"{C._GRAY}╰{'─' * 62}{C.RESET}\n"
+        self._disp_q.extend(footer)
+        self._in_think_display = False
+
     def _run(self):
         delay = 1.0 / self._CHARS_PER_SEC
         while not self._done or self._disp_q:
@@ -517,15 +550,39 @@ class PipelineTypewriter:
             sys.stdout.flush()
             return
         with self._lock:
-            self._raw_buf += chunk
-            if self._should_flush(self._raw_buf):
-                self._flush_raw()
+            segments = self._think_aware.push(chunk)
+            for is_think, text in segments:
+                if is_think and not self._in_think_display:
+                    self._flush_raw(force=True)
+                    self._enter_think()
+                elif not is_think and self._in_think_display:
+                    self._exit_think()
+                if is_think:
+                    self._think_raw_buf += text
+                    if self._should_flush(self._think_raw_buf):
+                        self._flush_think_raw()
+                else:
+                    self._raw_buf += text
+                    if self._should_flush(self._raw_buf):
+                        self._flush_raw()
 
     def finalize(self) -> str:
         full = "".join(self._full)
         if self._auto_mode:
             return full
         with self._lock:
+            for is_think, text in self._think_aware.flush():
+                if is_think and not self._in_think_display:
+                    self._flush_raw(force=True)
+                    self._enter_think()
+                elif not is_think and self._in_think_display:
+                    self._exit_think()
+                if is_think:
+                    self._think_raw_buf += text
+                else:
+                    self._raw_buf += text
+            if self._in_think_display:
+                self._exit_think()
             if self._raw_buf:
                 self._flush_raw(force=True)
         self._done = True
