@@ -125,6 +125,151 @@ def render_port_context(ctx: PortContext) -> str:
     return "\n".join(lines)
 
 
+# ── 無料モデル取得・選択 ─────────────────────────────────────────
+
+def fetch_free_models(api_key: str) -> list[dict]:
+    """OpenRouter API から無料モデル一覧を取得して返す。"""
+    import urllib.request
+    import json
+
+    url = f"{OPENROUTER_API_BASE}/models"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"  ⚠ モデル一覧の取得に失敗しました: {e}")
+        return []
+
+    models = data.get("data", [])
+    free_models = [
+        m for m in models
+        if (
+            str(m.get("pricing", {}).get("prompt", "1")) == "0"
+            and str(m.get("pricing", {}).get("completion", "1")) == "0"
+        ) or m.get("id", "").endswith(":free")
+    ]
+    free_models.sort(key=lambda m: m.get("name", m.get("id", "")))
+    return free_models
+
+
+def _test_model(api_key: str, model_id: str) -> tuple[bool, float]:
+    """モデルに最小リクエストを送り (成功フラグ, 応答時間秒) を返す。"""
+    import urllib.request
+    import json
+    import time
+
+    payload = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OPENROUTER_API_BASE}/chat/completions",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if "error" in data:
+            return False, 0.0
+        return True, time.time() - t0
+    except Exception:
+        return False, 0.0
+
+
+def select_model_interactively(api_key: str, current_model: str) -> str:
+    """無料モデルに実際にリクエストを送り、応答したものだけ番号選択で表示する。"""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    print("\n  無料モデル一覧を取得中...", end="", flush=True)
+    models = fetch_free_models(api_key)
+
+    if not models:
+        print("\n  現在のモデルを継続使用します。")
+        return current_model
+
+    total = len(models)
+    print(f"\r  {total} 件取得。疎通確認中（並列リクエスト送信）...\n", flush=True)
+
+    results: dict[str, tuple[bool, float]] = {}
+    lock = threading.Lock()
+    tested = [0]
+
+    def _test_one(m):
+        model_id = m["id"]
+        ok, elapsed = _test_model(api_key, model_id)
+        with lock:
+            results[model_id] = (ok, elapsed)
+            tested[0] += 1
+            print(f"\r  確認中... {tested[0]}/{total}  ", end="", flush=True)
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = [ex.submit(_test_one, m) for m in models]
+        for f in as_completed(futures):
+            f.result()
+
+    print()
+
+    working = [
+        (m, results[m["id"]][1])
+        for m in models
+        if results.get(m["id"], (False,))[0]
+    ]
+    working.sort(key=lambda x: x[1])  # 応答時間が速い順
+
+    if not working:
+        print("  ⚠ 疎通確認できたモデルがありませんでした。現在のモデルを使用します。")
+        return current_model
+
+    sep = "  " + "─" * 76
+    print(f"\n  稼働中のモデル: {len(working)} 件 / {total} 件\n")
+    print(sep)
+    print(f"  {'No.':<5} {'モデルID':<50} {'応答時間':>6}  {'コンテキスト長':>12}")
+    print(sep)
+
+    for i, (m, elapsed) in enumerate(working, 1):
+        model_id = m.get("id", "")
+        ctx = m.get("context_length", 0)
+        ctx_str = f"{ctx:,}" if ctx else "-"
+        marker = " ← 現在" if model_id == current_model else ""
+        print(f"  {i:<5} {model_id:<50} {elapsed:>5.1f}s  {ctx_str:>12}{marker}")
+
+    print(sep)
+    print(f"  0: キャンセル（現在のモデル '{current_model}' を使用）\n")
+
+    while True:
+        try:
+            raw = input("  番号を入力 > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return current_model
+
+        if raw == "" or raw == "0":
+            return current_model
+        try:
+            n = int(raw)
+        except ValueError:
+            print(f"  ⚠ 数字を入力してください（0〜{len(working)}）。")
+            continue
+        if 1 <= n <= len(working):
+            selected = working[n - 1][0]["id"]
+            print(f"  ✓ モデルを選択: {selected}\n")
+            return selected
+        print(f"  ⚠ 1〜{len(working)} の番号を入力してください。")
+
+
 # ── .env パーサー ────────────────────────────────────────────────
 
 def _parse_env_file(env_path: Path) -> dict[str, str]:

@@ -31,6 +31,12 @@ def main():
     base_dir = str(Path(__file__).parent)
     config, system_prompt = load_config(base_dir)
 
+    # 非対話モード（--prompt / --auto-prompt / --status）ではスキップ
+    _args = sys.argv[1:]
+    if not any(a in _args for a in ("--prompt", "--auto-prompt", "--status")):
+        from .config import select_model_interactively
+        config.model = select_model_interactively(config.api_keys[0], config.model)
+
     rotator      = AccountRotator(config)
     agent        = OpenRouterAgent(rotator, tools)
     orchestrator = AgentOrchestrator(rotator, tools, executor=agent)
