@@ -516,12 +516,12 @@ class OpenRouterAgent:
                         json_mode=self.json_mode,
                     ):
                         if text_chunk:
-                            if not header_printed:
-                                safe_print(f"\n  {C.purple('💭')} ", end="", flush=True)
-                                header_printed = True
                             if text_callback is not None:
                                 text_callback(text_chunk)
                             else:
+                                if not header_printed:
+                                    safe_print(f"\n  {C.purple('💭')} ", end="", flush=True)
+                                    header_printed = True
                                 safe_print(C.purple(text_chunk), end="", flush=True)
                             full_text += text_chunk
                         for ct in chunk_tools:
@@ -531,7 +531,7 @@ class OpenRouterAgent:
                     safe_print(C.yellow("\n\n  [割り込み] Ctrl+C"), flush=True)
                     return "__interrupted__", []
 
-                if header_printed and text_callback is None:
+                if header_printed:
                     safe_print()
 
                 return full_text, tool_calls_list

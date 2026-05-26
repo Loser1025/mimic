@@ -497,7 +497,7 @@ class PipelineTypewriter:
             self._disp_q.extend(rendered)
 
     def _enter_think(self):
-        header = f"{C._GRAY}╭─ 💭 思考中 {'─' * 50}{C.RESET}\n"
+        header = f"\n{C._GRAY}╭─ 💭 思考中 {'─' * 50}{C.RESET}\n"
         self._disp_q.extend(header)
         self._in_think_display = True
 
@@ -515,7 +515,7 @@ class PipelineTypewriter:
             return
         rendered = render_markdown_thinker(to_render)
         result = ""
-        for line in rendered.split("\n"):
+        for line in rendered.rstrip("\n").split("\n"):
             result += f"{C._GRAY}│{C.RESET} {line}\n"
         self._disp_q.extend(result)
 
