@@ -438,11 +438,44 @@ class ThinkAwareBuffer:
                 self._in_think = True
         return [(is_t, t) for is_t, t in results if t]
 
+    def _strip_partial_tag(self, text: str, tag: str) -> str:
+        """末尾に tag の前方一致する断片が残っていれば除去する。"""
+        for n in range(min(len(tag) - 1, len(text)), 0, -1):
+            if tag.startswith(text[-n:]):
+                return text[:-n]
+        return text
+
     def flush(self) -> list[tuple[bool, str]]:
-        """残バッファを強制フラッシュする。"""
-        out = [(self._in_think, self._buf)] if self._buf else []
-        self._buf = ""
-        return [(is_t, t) for is_t, t in out if t]
+        """残バッファを強制フラッシュする（safe margin なしでタグを正しく処理）。"""
+        if not self._buf:
+            return []
+        results: list[tuple[bool, str]] = []
+        while self._buf:
+            if self._in_think:
+                idx = self._buf.find(self._CLOSE_TAG)
+                if idx == -1:
+                    # 完全な閉じタグなし: 末尾の部分タグを除去してから出力
+                    content = self._strip_partial_tag(self._buf, self._CLOSE_TAG)
+                    if content:
+                        results.append((True, content))
+                    self._buf = ""
+                    break
+                results.append((True, self._buf[:idx]))
+                self._buf = self._buf[idx + self._CLOSE_LEN:]
+                self._in_think = False
+            else:
+                idx = self._buf.find(self._OPEN_TAG)
+                if idx == -1:
+                    content = self._strip_partial_tag(self._buf, self._OPEN_TAG)
+                    if content:
+                        results.append((False, content))
+                    self._buf = ""
+                    break
+                if idx > 0:
+                    results.append((False, self._buf[:idx]))
+                self._buf = self._buf[idx + self._OPEN_LEN:]
+                self._in_think = True
+        return [(is_t, t) for is_t, t in results if t]
 
 
 class PipelineTypewriter:
@@ -478,12 +511,17 @@ class PipelineTypewriter:
             return False
         return True
 
+    @staticmethod
+    def _strip_think_tags(text: str) -> str:
+        """安全網: 漏れた <think>/<think> タグを除去する。"""
+        return re.sub(r'</?think>', '', text)
+
     def _flush_raw(self, force: bool = False):
         if not self._raw_buf:
             return
         last_nl = self._raw_buf.rfind("\n")
         if force or last_nl == -1:
-            rendered = self._renderer(self._raw_buf)
+            rendered = self._renderer(self._strip_think_tags(self._raw_buf))
             if not rendered.endswith("\n"):
                 rendered += "\n"
             self._disp_q.extend(rendered)
@@ -491,7 +529,7 @@ class PipelineTypewriter:
         else:
             complete = self._raw_buf[:last_nl + 1]
             self._raw_buf = self._raw_buf[last_nl + 1:]
-            rendered = self._renderer(complete)
+            rendered = self._renderer(self._strip_think_tags(complete))
             if not rendered.endswith("\n"):
                 rendered += "\n"
             self._disp_q.extend(rendered)
@@ -513,7 +551,7 @@ class PipelineTypewriter:
             self._think_raw_buf = self._think_raw_buf[last_nl + 1:]
         if not to_render:
             return
-        rendered = render_markdown_thinker(to_render)
+        rendered = render_markdown_thinker(self._strip_think_tags(to_render))
         result = ""
         for line in rendered.rstrip("\n").split("\n"):
             result += f"{C._GRAY}│{C.RESET} {line}\n"
