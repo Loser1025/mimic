@@ -89,7 +89,7 @@ def main():
     sql = f"""
 SELECT
   FORMAT_TIMESTAMP('%Y/%m/%d', con.contracted_at, 'Asia/Tokyo') AS contracted_date,
-  CAST(c.source_id AS STRING) AS patient_id,
+  CAST(c.id AS STRING) AS patient_id,
   CONCAT(c.last_name, ' ', c.first_name) AS name,
   pc.name AS product_class,
   con.menu_name AS menu_name,
