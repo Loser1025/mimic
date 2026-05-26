@@ -396,6 +396,55 @@ class TokenBucket:
             )
 
 
+class ThinkAwareBuffer:
+    """ストリームチャンクから <think>...</think> を検出して分割する。
+    タグが複数チャンクにまたがる場合も安全に処理する。"""
+    _OPEN_TAG  = "<think>"
+    _CLOSE_TAG = "</think>"
+    _OPEN_LEN  = len(_OPEN_TAG)   # 7
+    _CLOSE_LEN = len(_CLOSE_TAG)  # 8
+
+    def __init__(self):
+        self._buf      = ""
+        self._in_think = False
+
+    def push(self, chunk: str) -> list[tuple[bool, str]]:
+        """チャンクを受け取り (is_think, text) のリストを返す。タグ自体は除去される。"""
+        self._buf += chunk
+        results: list[tuple[bool, str]] = []
+        while self._buf:
+            if self._in_think:
+                idx = self._buf.find(self._CLOSE_TAG)
+                if idx == -1:
+                    safe = max(0, len(self._buf) - self._CLOSE_LEN)
+                    if safe:
+                        results.append((True, self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+                results.append((True, self._buf[:idx]))
+                self._buf      = self._buf[idx + self._CLOSE_LEN:]
+                self._in_think = False
+            else:
+                idx = self._buf.find(self._OPEN_TAG)
+                if idx == -1:
+                    safe = max(0, len(self._buf) - self._OPEN_LEN)
+                    if safe:
+                        results.append((False, self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+                if idx > 0:
+                    results.append((False, self._buf[:idx]))
+                self._buf      = self._buf[idx + self._OPEN_LEN:]
+                self._in_think = True
+        return [(is_t, t) for is_t, t in results if t]
+
+    def flush(self) -> list[tuple[bool, str]]:
+        """残バッファを強制フラッシュする。"""
+        out = [(self._in_think, self._buf)] if self._buf else []
+        self._buf = ""
+        return [(is_t, t) for is_t, t in out if t]
+
+
 class PipelineTypewriter:
     """
     AIストリーミングを3段パイプラインで表示する:
