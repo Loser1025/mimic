@@ -68,20 +68,47 @@ def _check_read_warning(path: str) -> str:
     return ""
 
 def _run_syntax_check(p: Path) -> str:
-    """Pythonファイルの構文チェックを実行する"""
-    if p.suffix != ".py":
-        return ""
-    try:
-        res = subprocess.run(
-            ["python", "-m", "py_compile", str(p)],
-            capture_output=True, text=True, timeout=5
-        )
-        if res.returncode == 0:
+    """ファイル保存後の構文・lint チェックを実行してエラーをフィードバックする"""
+    results = []
+
+    if p.suffix == ".py":
+        try:
+            res = subprocess.run(
+                ["python", "-m", "py_compile", str(p)],
+                capture_output=True, text=True, timeout=5
+            )
+            if res.returncode != 0:
+                results.append(f"⚠ 構文エラー:\n{res.stderr.strip()}")
+        except Exception as e:
+            results.append(f"⚠ 構文チェックエラー: {e}")
+
+        try:
+            res = subprocess.run(
+                ["ruff", "check", "--select=E,F,W", "--no-cache", str(p)],
+                capture_output=True, text=True, timeout=10
+            )
+            if res.returncode != 0 and res.stdout.strip():
+                lines = res.stdout.strip().splitlines()[:10]
+                results.append("⚠ ruff:\n" + "\n".join(lines))
+        except FileNotFoundError:
+            pass  # ruff 未インストール時はスキップ
+
+    elif p.suffix in (".ts", ".tsx", ".js", ".jsx"):
+        try:
+            res = subprocess.run(
+                ["node", "--check", str(p)],
+                capture_output=True, text=True, timeout=10
+            )
+            if res.returncode != 0:
+                results.append(f"⚠ JS/TS 構文エラー:\n{res.stderr.strip()[:300]}")
+        except FileNotFoundError:
+            pass  # node 未インストール時はスキップ
+
+    if not results:
+        if p.suffix in (".py", ".ts", ".tsx", ".js", ".jsx"):
             return "\n✓ 構文チェック: OK"
-        else:
-            return f"\n⚠ 構文エラー検出:\n{res.stderr}"
-    except Exception as e:
-        return f"\n⚠ 構文チェック実行エラー: {e}"
+        return ""
+    return "\n" + "\n".join(results)
 
 def _generate_diff(old_text: str, new_text: str) -> str:
     """変更前後の差分を生成し、最大30行まで返す"""
@@ -185,6 +212,34 @@ class ToolRegistry:
         return self._tools[name]["fn"](**args)
 
 tools = ToolRegistry()
+
+_current_scratchpad: str = "【現在の進捗】タスクを開始しました。"
+
+@tools.register(
+    name="update_scratchpad",
+    description=(
+        "エージェント自身の作業メモ（Scratchpad）を更新する。"
+        "ターンをまたいだ記憶喪失を防ぐため、タスクの節目ごとに必ず呼び出すこと。\n"
+        "以下のフォーマットで書くこと（800字以内）:\n"
+        "【ゴール】ユーザーの最終目標を1行で\n"
+        "【完了済み】✓ やったこと\n"
+        "【次のステップ】→ 次にやること\n"
+        "【発見・注意】⚠ 判明した制約・エラー・重要な変数"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "スクラッチパッドに書き込む内容（800字以内、所定フォーマットで記述）"}
+        },
+        "required": ["content"]
+    }
+)
+def update_scratchpad(content: str) -> str:
+    global _current_scratchpad
+    if len(content) > 800:
+        content = content[:800] + "\n…（上限800字で切り捨て）"
+    _current_scratchpad = content
+    return "✓ スクラッチパッドを更新しました。"
 
 _READ_FILE_CHAR_CHUNK = 10000  # 出力要約の上限に合わせた文字数チャンクサイズ
 
@@ -886,16 +941,12 @@ def patch_file(path: str, search: str, replace: str) -> str:
                 best_n = win
 
     if best_ratio >= THRESHOLD and best_i >= 0:
-        block = "\n".join(content_lines[best_i:best_i + best_n])
-        b_stripped, b_indent = strip_common_indent(block)
-        re_indented, block = apply_and_write(
-            content_lines, best_i, best_n, block, b_indent
-        )
-        diff_lines = re_indented.count("\n") - block.count("\n")
-        sign = "+" if diff_lines >= 0 else ""
+        block_preview = "\n".join(content_lines[best_i:best_i + min(best_n, 10)])
         return (
-            f"編集完了（類似マッチ ratio={best_ratio:.2f}）: {path}  "
-            f"({sign}{diff_lines} 行差分, line {best_i+1}–{best_i+best_n})"
+            f"エラー: 完全一致が見つかりません（類似度 {best_ratio:.2f}、行 {best_i+1}–{best_i+best_n}）。\n"
+            f"誤書き込みを防ぐため自動修正しません。\n"
+            f"read_file で内容を確認し、正確な文字列を指定してください。\n"
+            f"近似箇所（先頭10行）:\n{block_preview}"
         )
 
     preview = search[:120].replace("\n", "↵")

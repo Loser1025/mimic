@@ -387,7 +387,15 @@ class OpenRouterAgent:
             safe_print(f"  推論モード: {'ON' if enabled else 'OFF'}")
 
     def _build_context_header(self) -> str:
-        return f"[作業フォルダ] {self.cwd}"
+        from . import tools as _tools_mod
+        sep = "─" * 40
+        return (
+            f"[作業フォルダ] {self.cwd}\n"
+            f"{sep}\n"
+            f"--- [エージェントの自己記憶（Scratchpad）] ---\n"
+            f"{_tools_mod._current_scratchpad}\n"
+            f"--- [Scratchpad ここまで] ---"
+        )
 
     def set_cwd(self, path: str):
         self.cwd = path
@@ -395,6 +403,13 @@ class OpenRouterAgent:
 
     def start_task(self, goal: str):
         self._task_goal = goal
+        from . import tools as _tools_mod
+        _tools_mod._current_scratchpad = (
+            f"【ゴール】{goal}\n"
+            f"【完了済み】（なし）\n"
+            f"【次のステップ】→ タスク分析中\n"
+            f"【発見・注意】（なし）"
+        )
 
     def end_task(self):
         self._task_goal = None
@@ -680,39 +695,80 @@ class OpenRouterAgent:
                 ],
             })
 
-            for tc in tool_calls:
+            # 書き込みツールが含まれるかで並列/逐次を切り替える
+            _has_write = any(tc.get("name") in write_tools for tc in tool_calls)
+
+            def _exec_stream_tool(tc):
                 fn_name = tc.get("name", "")
                 fn_args = tc.get("args", {})
                 call_id = tc.get("id") or f"call_{fn_name}_{uuid4().hex[:8]}"
-
                 safe_print(
                     f"  {C.bold_green('⚙')} {C.green(fn_name)}"
                     + C.cyan(f"({', '.join(f'{k}={repr(v)[:40]}' for k, v in fn_args.items())})"),
                     flush=True,
                 )
-
-                if fn_name in ("write_file", "edit_file", "patch_file"):
-                    _print_write_diff(fn_name, fn_args)
-
                 try:
                     result = self.tools.execute(fn_name, fn_args)
                     result_str = cache_tool_output(fn_name, str(result))
                     if fn_name in _CACHEABLE_TOOLS:
                         cache_key = self._make_cache_key(fn_name, fn_args)
-                        self._tool_cache[cache_key] = result_str
-                    elif fn_name in write_tools:
-                        self._invalidate_cache_for_path(fn_args.get("path", ""))
-                except UserRejectedWriteError:
-                    raise
+                        with self._tool_cache_lock:
+                            self._tool_cache[cache_key] = result_str
                 except Exception as e:
                     result_str = f"ツール実行エラー: {fn_name}: {e}"
                     safe_print(C.red(f"\n  ✗ [{fn_name}] エラー: {e}"), flush=True)
+                return call_id, result_str
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": result_str,
-                })
+            if len(tool_calls) > 1 and not _has_write:
+                # 読み取り専用ツールを並列実行
+                with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as _ex:
+                    _futures = {_ex.submit(_exec_stream_tool, tc): tc for tc in tool_calls}
+                    _results_map = {}
+                    for _f in as_completed(_futures):
+                        _cid, _res = _f.result()
+                        _results_map[_cid] = _res
+                for tc in tool_calls:
+                    call_id = tc.get("id") or f"call_{tc['name']}_{uuid4().hex[:8]}"
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": _results_map.get(call_id, "(結果なし)"),
+                    })
+            else:
+                # 書き込みツールあり or 単一ツール → 逐次実行
+                for tc in tool_calls:
+                    fn_name = tc.get("name", "")
+                    fn_args = tc.get("args", {})
+                    call_id = tc.get("id") or f"call_{fn_name}_{uuid4().hex[:8]}"
+
+                    safe_print(
+                        f"  {C.bold_green('⚙')} {C.green(fn_name)}"
+                        + C.cyan(f"({', '.join(f'{k}={repr(v)[:40]}' for k, v in fn_args.items())})"),
+                        flush=True,
+                    )
+
+                    if fn_name in ("write_file", "edit_file", "patch_file"):
+                        _print_write_diff(fn_name, fn_args)
+
+                    try:
+                        result = self.tools.execute(fn_name, fn_args)
+                        result_str = cache_tool_output(fn_name, str(result))
+                        if fn_name in _CACHEABLE_TOOLS:
+                            cache_key = self._make_cache_key(fn_name, fn_args)
+                            self._tool_cache[cache_key] = result_str
+                        elif fn_name in write_tools:
+                            self._invalidate_cache_for_path(fn_args.get("path", ""))
+                    except UserRejectedWriteError:
+                        raise
+                    except Exception as e:
+                        result_str = f"ツール実行エラー: {fn_name}: {e}"
+                        safe_print(C.red(f"\n  ✗ [{fn_name}] エラー: {e}"), flush=True)
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": result_str,
+                    })
 
         fallback = f"(ReActループ上限 {MAX_TOOL_ROUNDS} ターンに達しました)"
         self.conversation.append({"role": "user", "content": user_message})
