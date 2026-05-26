@@ -24,6 +24,23 @@ MAX_BACKOFF = 60.0
 MAX_TOOL_ROUNDS = 60
 _CACHEABLE_TOOLS = ["read_file", "list_directory", "search_files", "get_repo_map"]
 
+# コンテキストウィンドウ → 文字数変換・圧縮しきい値の定数
+_CHARS_PER_TOKEN = 4    # 日本語/英語平均: 1トークン ≈ 4文字
+_COMPACTION_RATIO = 0.75  # コンテキスト容量の 75% に達したら圧縮
+_COMPACTION_DEFAULT = 3_000_000  # context_length 不明時のフォールバック（OwlAlpha 1Mトークン相当）
+
+# コンテキスト超過エラーを示すキーワード（プロバイダーによって表現が異なる）
+_CTX_EXCEEDED_KEYWORDS = (
+    "context_length", "context length", "context window",
+    "token", "too long", "maximum context", "exceeds", "input too large",
+    "prompt is too long", "content too large",
+)
+
+def _is_context_exceeded(message: str) -> bool:
+    """エラーメッセージがコンテキスト超過を示しているか判定する。"""
+    lower = message.lower()
+    return any(kw in lower for kw in _CTX_EXCEEDED_KEYWORDS)
+
 
 # ── エラー定義 ────────────────────────────────────────────────────
 
@@ -355,9 +372,6 @@ def _print_write_diff(fn_name: str, fn_args: dict) -> None:
 class OpenRouterAgent:
     """ReAct ループエージェント（OpenRouter版）。"""
 
-    COMPACTION_THRESHOLD_CHARS = 3_000_000  # OwlAlpha 1Mトークン ≈ 400万文字の75%
-    COMPACTION_KEEP_RECENT = 20
-
     def __init__(self, config_or_rotator, tool_registry):
         # AccountRotator でも OpenRouterConfig でも受け付ける
         if isinstance(config_or_rotator, AccountRotator):
@@ -377,6 +391,7 @@ class OpenRouterAgent:
         self._tool_cache: dict[str, str] = {}
         self._tool_cache_lock = threading.Lock()
         self.json_mode: bool = False
+        self._update_compaction_threshold()
 
     def set_system_prompt(self, prompt: str):
         self.system_prompt = prompt
@@ -396,6 +411,47 @@ class OpenRouterAgent:
             f"{_tools_mod._current_scratchpad}\n"
             f"--- [Scratchpad ここまで] ---"
         )
+
+    def _update_compaction_threshold(self):
+        """config.context_length から会話圧縮しきい値（文字数）を再計算する。"""
+        ctx = self._config.context_length
+        if ctx > 0:
+            self.compaction_threshold_chars = int(ctx * _CHARS_PER_TOKEN * _COMPACTION_RATIO)
+        else:
+            self.compaction_threshold_chars = _COMPACTION_DEFAULT
+
+    def _compaction_keep_recent(self) -> int:
+        """compaction 後に残す直近メッセージ数をコンテキスト長に応じて計算する。
+        小さいコンテキストのモデルでは少なく（最低4）、大きければ最大20。
+        平均メッセージサイズ 2000文字 × 2 バッファを想定。"""
+        return max(4, min(20, self.compaction_threshold_chars // 4000))
+
+    def _effective_threshold(self) -> int:
+        """system_prompt と context_header のオーバーヘッドを差し引いた
+        実際に会話履歴に使える文字数上限を返す。"""
+        overhead = len(self.system_prompt or "") + len(self._build_context_header())
+        return max(1000, self.compaction_threshold_chars - overhead)
+
+    def _trim_to_fit(self, messages: list[dict]) -> list[dict]:
+        """送信前にペイロードがコンテキスト窓の 90% を超えていたら
+        _trim_messages_smart を繰り返してサイズを削減する。"""
+        ctx = self._config.context_length
+        if ctx <= 0:
+            return messages
+        max_chars = int(ctx * _CHARS_PER_TOKEN * 0.90)
+        sys_chars = len(self.system_prompt or "")
+        available = max(2000, max_chars - sys_chars)
+        total = sum(_msg_char_count(m) for m in messages)
+        trim_count = 0
+        while total > available and len(messages) > 4 and trim_count < 8:
+            messages = _trim_messages_smart(messages)
+            total = sum(_msg_char_count(m) for m in messages)
+            trim_count += 1
+        if trim_count:
+            safe_print(C.yellow(
+                f"  ✂ 送信前トリム: {trim_count}回実行 → {total:,}文字 (上限 {available:,}文字)"
+            ), flush=True)
+        return messages
 
     def set_cwd(self, path: str):
         self.cwd = path
@@ -425,6 +481,9 @@ class OpenRouterAgent:
     def print_status(self):
         n = len(self._config.api_keys)
         safe_print(f"  モデル  : {self._config.model}")
+        ctx = self._config.context_length
+        ctx_str = f"{ctx:,} tokens" if ctx > 0 else "不明"
+        safe_print(f"  CTX窓  : {ctx_str}  (圧縮しきい値: {self._effective_threshold():,} 文字 / 保持上限: {self._compaction_keep_recent()} メッセージ)")
         safe_print(f"  APIキー : {n} 個")
         safe_print(f"  RPM上限 : {self._config.rpm_limit} / キー")
         for i, bucket in enumerate(self._config._buckets):
@@ -434,10 +493,11 @@ class OpenRouterAgent:
         safe_print(f"  作業Dir : {self.cwd}")
 
     def _compact_if_needed(self):
+        effective = self._effective_threshold()
         total_chars = sum(_msg_char_count(m) for m in self.conversation)
-        if total_chars <= self.COMPACTION_THRESHOLD_CHARS:
+        if total_chars <= effective:
             return
-        keep_recent = self.COMPACTION_KEEP_RECENT
+        keep_recent = self._compaction_keep_recent()
         first_pair = self.conversation[:2]
         recent_part = self.conversation[-keep_recent:] if keep_recent < len(self.conversation) else []
         removed = len(self.conversation) - len(first_pair) - len(recent_part)
@@ -456,6 +516,8 @@ class OpenRouterAgent:
         working_messages = _repair_message_sequence(list(messages))
 
         while attempt < MAX_RETRIES:
+            # 送信前にペイロードサイズをプロアクティブに確認・削減
+            working_messages = self._trim_to_fit(working_messages)
             try:
                 safe_print(C.gray(f"  → openrouter ({self._config.model})"), flush=True)
                 response = _call_openrouter_api(
@@ -466,6 +528,15 @@ class OpenRouterAgent:
                 return response
 
             except RateLimitError as e:
+                # 429 がコンテキスト超過由来の場合はトリムしてリトライ
+                if _is_context_exceeded(e.message) and len(working_messages) > 4 and trim_count < 5:
+                    safe_print(C.yellow(
+                        f"  ✂ 429 コンテキスト超過 → メッセージを削減してリトライ"
+                    ), flush=True)
+                    working_messages = _trim_messages_smart(working_messages)
+                    trim_count += 1
+                    attempt += 1
+                    continue
                 backoff = min(BASE_BACKOFF * (2 ** attempt) + random.uniform(0, 1), MAX_BACKOFF)
                 safe_print(C.yellow(f"  ⚠ 429 レート制限 → {backoff:.0f}秒待機してリトライ"), flush=True)
                 time.sleep(backoff)
@@ -481,6 +552,15 @@ class OpenRouterAgent:
                 attempt += 1
 
             except OpenRouterAPIError as e:
+                # 400 コンテキスト超過はトリムしてリトライ
+                if e.status == 400 and _is_context_exceeded(e.message) and len(working_messages) > 4 and trim_count < 5:
+                    safe_print(C.yellow(
+                        f"  ✂ 400 コンテキスト超過 → メッセージを削減してリトライ"
+                    ), flush=True)
+                    working_messages = _trim_messages_smart(working_messages)
+                    trim_count += 1
+                    attempt += 1
+                    continue
                 safe_print(C.red(f"  ✗ APIエラー({e.status}): {e.message}"), flush=True)
                 raise
 
@@ -504,6 +584,8 @@ class OpenRouterAgent:
         working_messages = _repair_message_sequence(list(messages))
 
         while attempt < MAX_RETRIES:
+            # 送信前にペイロードサイズをプロアクティブに確認・削減
+            working_messages = self._trim_to_fit(working_messages)
             try:
                 safe_print(C.gray(f"  → openrouter ({self._config.model})"), flush=True)
                 full_text = ""
@@ -537,6 +619,15 @@ class OpenRouterAgent:
                 return full_text, tool_calls_list
 
             except RateLimitError as e:
+                # 429 がコンテキスト超過由来の場合はトリムしてリトライ
+                if _is_context_exceeded(e.message) and len(working_messages) > 4 and trim_count < 5:
+                    safe_print(C.yellow(
+                        f"  ✂ 429 コンテキスト超過 → メッセージを削減してリトライ"
+                    ), flush=True)
+                    working_messages = _trim_messages_smart(working_messages)
+                    trim_count += 1
+                    attempt += 1
+                    continue
                 backoff = min(BASE_BACKOFF * (2 ** attempt) + random.uniform(0, 1), MAX_BACKOFF)
                 safe_print(C.yellow(f"  ⚠ 429 → {backoff:.0f}秒待機 ({e.message[:80]})"), flush=True)
                 time.sleep(backoff)
@@ -552,6 +643,15 @@ class OpenRouterAgent:
                 attempt += 1
 
             except OpenRouterAPIError as e:
+                # 400 コンテキスト超過はトリムしてリトライ
+                if e.status == 400 and _is_context_exceeded(e.message) and len(working_messages) > 4 and trim_count < 5:
+                    safe_print(C.yellow(
+                        f"  ✂ 400 コンテキスト超過 → メッセージを削減してリトライ"
+                    ), flush=True)
+                    working_messages = _trim_messages_smart(working_messages)
+                    trim_count += 1
+                    attempt += 1
+                    continue
                 safe_print(C.red(f"  ✗ APIエラー({e.status}): {e.message}"), flush=True)
                 raise
 

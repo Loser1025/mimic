@@ -65,9 +65,11 @@ def cmd_model(agent: OpenRouterAgent, args: str):
     if not arg:
         # 引数なし → 起動時と同じライブセレクタを起動
         from .config import select_model_interactively
-        new_model = select_model_interactively(agent._config.api_keys[0], current)
+        new_model, new_ctx = select_model_interactively(agent._config.api_keys[0], current)
         if new_model != current:
             agent._config.model = new_model
+            agent._config.context_length = new_ctx
+            agent._update_compaction_threshold()
             agent.clear_history()
             safe_print(C.green(f"  ✓ モデルを変更しました: {new_model}"))
             safe_print(C.gray("  会話履歴をリセットしました。"))

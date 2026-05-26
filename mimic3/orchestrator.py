@@ -20,7 +20,8 @@ from .agent import (OpenRouterAgent, AccountRotator, _stream_openrouter_api,
                                _trim_messages_smart, _repair_message_sequence,
                                OpenRouterAPIError, RateLimitError, ServerError,
                                MAX_RETRIES, BASE_BACKOFF, MAX_BACKOFF, MAX_TOOL_ROUNDS,
-                               _CACHEABLE_TOOLS, _print_write_diff)
+                               _CACHEABLE_TOOLS, _print_write_diff,
+                               _CHARS_PER_TOKEN)
 from .tools import ToolRegistry, tools, UserRejectedWriteError
 from .autogit import AutoGit, ReactLog
 
@@ -342,6 +343,22 @@ class AgentOrchestrator:
     def set_executor_system_prompt(self, prompt: str):
         self.executor.set_system_prompt(prompt)
 
+    def _review_result_max_chars(self) -> int:
+        """Reviewer/Reflection プロンプトに注入する結果文字数の上限をコンテキスト長から計算する。
+        128K tokens 以下 → 2000文字、1M tokens → 8000文字（線形スケール）。"""
+        ctx = self.executor._config.context_length
+        if ctx <= 0:
+            return 2000
+        return max(2000, min(ctx * _CHARS_PER_TOKEN // 500, 8000))
+
+    def _max_planner_history(self) -> int:
+        """Planner が保持する会話履歴の最大ターン数をコンテキスト長から計算する。
+        128K tokens 以下 → 8ターン、1M tokens → 20ターン（線形スケール）。"""
+        ctx = self.planner._config.context_length
+        if ctx <= 0:
+            return 8
+        return max(8, min(ctx // 50_000 * 2, 20))
+
     def _make_executor_agent(self) -> "OpenRouterAgent":
         """並列実行用に独立した Executor エージェントを生成（状態を共有しない）"""
         a = OpenRouterAgent(self.rotator, self.tool_registry)
@@ -437,19 +454,19 @@ class AgentOrchestrator:
             return False, text[:100]
         return True, ""
 
-    @staticmethod
-    def _build_review_prompt(description: str, result: str, ps_status: str) -> str:
+    def _build_review_prompt(self, description: str, result: str, ps_status: str) -> str:
         """
         Reviewer に渡す構造化プロンプトを生成する。
         ps_status: _extract_ps_status() の戻り値（空文字 = PSコマンドなし）
         """
+        max_chars = self._review_result_max_chars()
         lines = [f"ステップの目標: {description}"]
         if ps_status:
             is_fail = ps_status.startswith("[FAILURE")
             lines.append(f"PowerShell実行ステータス: {ps_status}")
             if is_fail:
                 lines.append("※ FAILUREはコマンド失敗を意味します。ok=false を強く推奨します。")
-        lines.append(f"実行結果（全文）:\n{result[:2000]}")
+        lines.append(f"実行結果（全文）:\n{result[:max_chars]}")
         return "\n".join(lines)
 
     def _make_reviewer(self) -> "OpenRouterAgent":
@@ -762,11 +779,12 @@ class AgentOrchestrator:
             f"  Step {s.index} ({s.status}): {s.description}" for s in steps
         )
 
+        max_chars = self._review_result_max_chars()
         prompt = (
             f"[タスク] {user_message}\n\n"
             f"[作業フォルダ] {self.executor.cwd}\n\n"
             f"[実行ステップ]\n{step_summary}\n"
-            f"[Executorの最終報告]\n{final_result[:2000]}\n\n"
+            f"[Executorの最終報告]\n{final_result[:max_chars]}\n\n"
             f"1. read_file や list_directory で実際にファイルを確認し、タスクが正確に完了しているか検証してください。\n\n"
             f"出力形式(JSONのみ):\n"
             f"{{\n"
@@ -818,10 +836,10 @@ class AgentOrchestrator:
             # ── 2. Planner でステップ作成 ──────────────────────────────
             # clear_history() を呼ばない → 過去の(prompt, JSON)ペアが履歴に残る
             # モデルは「自分の応答は常にJSON」と学習し、JSON崩れを自然に防ぐ
-            # 履歴上限: 直近4タスク分（8ターン）に制限してトークン肥大を防ぐ
-            MAX_PLANNER_HISTORY = 8
-            if len(self.planner.conversation) > MAX_PLANNER_HISTORY:
-                self.planner.conversation = self.planner.conversation[-MAX_PLANNER_HISTORY:]
+            # 履歴上限: コンテキスト長に応じて動的調整（8〜20ターン）
+            max_planner_history = self._max_planner_history()
+            if len(self.planner.conversation) > max_planner_history:
+                self.planner.conversation = self.planner.conversation[-max_planner_history:]
 
             tool_names = ", ".join(
                 t["function"]["name"] for t in self.tool_registry.get_specs()

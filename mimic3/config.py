@@ -21,6 +21,7 @@ class OpenRouterConfig:
     site_url: str = "https://github.com/Loser1025/mimic"
     site_name: str = "Mimic OpenRouter"
     rpm_limit: int = 3
+    context_length: int = 0  # モデルのコンテキストウィンドウ（トークン数）、0=不明
     _key_index: int = field(default=0, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _buckets: list = field(default_factory=list, init=False, repr=False)
@@ -188,8 +189,9 @@ def _test_model(api_key: str, model_id: str) -> tuple[bool, float]:
         return False, 0.0
 
 
-def select_model_interactively(api_key: str, current_model: str) -> str:
-    """無料モデルに実際にリクエストを送り、応答したものだけ番号選択で表示する。"""
+def select_model_interactively(api_key: str, current_model: str) -> tuple[str, int]:
+    """無料モデルに実際にリクエストを送り、応答したものだけ番号選択で表示する。
+    Returns: (model_id, context_length) — context_length は 0 のこともある。"""
     import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -228,7 +230,7 @@ def select_model_interactively(api_key: str, current_model: str) -> str:
     models = fetch_free_models(api_key)
     if not models:
         print(f"\r  {y('⚠')}  モデル一覧の取得に失敗。現在のモデルを継続使用します。{' ' * 10}")
-        return current_model
+        return current_model, 0
     total = len(models)
     print(f"\r  {g('✓')}  {w(str(total))} 件のモデルを取得しました{' ' * 25}\n")
 
@@ -262,7 +264,7 @@ def select_model_interactively(api_key: str, current_model: str) -> str:
     )
     if not working:
         print(f"  {y('⚠')}  疎通できたモデルがありませんでした。現在のモデルを使用します。\n")
-        return current_model
+        return current_model, 0
 
     # ── フェーズ3: 結果テーブル ──────────────────────────────────
     CN, CID, CLAT, CCTX = 4, 48, 7, 9
@@ -315,23 +317,31 @@ def select_model_interactively(api_key: str, current_model: str) -> str:
     print(hline("╚", "╝", "╩"))
     print(f"\n  {gd('[ 0 ]')}  {gr('キャンセル')}  {gr('·')}  {gr('現在のモデル:')}  {y(current_model)}\n")
 
+    # current_model の context_length を working リストから逆引き（キャンセル時用）
+    _current_ctx = next(
+        (mdl.get("context_length", 0) for mdl, _ in working if mdl.get("id") == current_model),
+        0,
+    )
+
     while True:
         try:
             raw = input(f"  {g('▸')}  番号を入力  {gd('›')}  ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
-            return current_model
+            return current_model, _current_ctx
         if raw in ("", "0"):
-            return current_model
+            return current_model, _current_ctx
         try:
             n = int(raw)
         except ValueError:
             print(f"  {y('⚠')}  数字を入力してください（0〜{len(working)}）。")
             continue
         if 1 <= n <= len(working):
-            selected = working[n - 1][0]["id"]
+            selected_mdl = working[n - 1][0]
+            selected = selected_mdl["id"]
+            selected_ctx = selected_mdl.get("context_length", 0)
             print(f"\n  {bg('✓')}  {w('選択完了:')}  {g(selected)}\n")
-            return selected
+            return selected, selected_ctx
         print(f"  {y('⚠')}  1〜{len(working)} の番号を入力してください。")
 
 

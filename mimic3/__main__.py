@@ -35,7 +35,7 @@ def main():
     _args = sys.argv[1:]
     if not any(a in _args for a in ("--prompt", "--auto-prompt", "--status")):
         from .config import select_model_interactively
-        config.model = select_model_interactively(config.api_keys[0], config.model)
+        config.model, config.context_length = select_model_interactively(config.api_keys[0], config.model)
 
     rotator      = AccountRotator(config)
     agent        = OpenRouterAgent(rotator, tools)
