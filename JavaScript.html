@@ -1,0 +1,97 @@
+<script>
+(function () {
+  'use strict';
+  var records = [];
+  var elements = {
+    keywordRows: document.getElementById('keywordRows'),
+    template: document.getElementById('keywordTemplate'),
+    status: document.getElementById('statusFilter'),
+    industry: document.getElementById('industryFilter'),
+    employment: document.getElementById('employmentFilter'),
+    job: document.getElementById('jobFilter'),
+    area: document.getElementById('areaFilter'),
+    minSalary: document.getElementById('minSalary'),
+    maxSalary: document.getElementById('maxSalary'),
+    sort: document.getElementById('sortOrder'),
+    resultGrid: document.getElementById('resultGrid'),
+    resultCount: document.getElementById('resultCount'),
+    buttonCount: document.getElementById('matchedButtonCount'),
+    companyCount: document.getElementById('companyCount'),
+    openCount: document.getElementById('openCount'),
+    loading: document.getElementById('loadingMessage'),
+    empty: document.getElementById('emptyMessage'),
+    error: document.getElementById('errorMessage'),
+    dialog: document.getElementById('detailDialog'),
+    dialogCompany: document.getElementById('dialogCompany'),
+    dialogContent: document.getElementById('dialogContent')
+  };
+  var detailGroups = [
+    ['企業・求人情報', [['No.', 'number'], ['業種', 'industry'], ['職種', 'job'], ['勤務地', 'location'], ['企業規模', 'size'], ['雇用形態', 'employment'], ['求人ステータス', 'status']]],
+    ['勤務条件', [['想定年収（万円）', 'salary'], ['給与備考', 'salaryNote'], ['勤務時間', 'hours'], ['休日・休暇', 'holidays'], ['福利厚生', 'benefits']]],
+    ['応募・選考', [['必須資格・経験', 'required'], ['歓迎資格・経験', 'preferred'], ['選考ステップ', 'selection'], ['面接回数', 'interviews'], ['内定後入社まで', 'timeToJoin']]],
+    ['契約・推薦先', [['紹介手数料率', 'fee'], ['返金規定', 'refund'], ['推薦方法', 'submissionMethod'], ['求人票（募集ポジション/職種）', 'jobPosting'], ['応募時メール', 'email'], ['応募時電話番号', 'phone'], ['担当者名', 'contact'], ['情報取得元', 'source'], ['確認メモ', 'contractMemo']]],
+    ['備考', [['備考・特記事項', 'notes'], ['Max', 'sheetMax'], ['min', 'sheetMin'], ['数式メモ欄', 'sheetFormulaNote']]]
+  ];
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, function (character) {
+      return ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[character];
+    });
+  }
+  function searchable(value) { return String(value || '').toLowerCase(); }
+  function uniqueValues(key) {
+    return Array.from(new Set(records.map(function (record) { return record[key]; }).filter(function (value) { return value && value !== '—'; }))).sort(function (a, b) { return a.localeCompare(b, 'ja'); });
+  }
+  function industryCategory(value) {
+    var industry = String(value || '');
+    var categories = [
+      ['警備', /警備|清掃/],
+      ['運送・物流', /運送|物流|タクシー/],
+      ['建設・土木', /建設|土木|施工|電気工事/],
+      ['製造', /製造|工場|産業|ゴム/],
+      ['医療・介護・福祉', /医療|介護|福祉/],
+      ['飲食・接客', /飲食|接客/],
+      ['営業', /営業/],
+      ['設備管理', /設備管理/]
+    ];
+    var match = categories.find(function (category) { return category[1].test(industry); });
+    return match ? match[0] : industry && industry !== '—' ? industry : 'その他';
+  }
+  function jobCategories(record) {
+    var text = [record.job, record.industry].join(' ');
+    var categories = [
+      ['警備', /警備/], ['清掃', /清掃/], ['ドライバー・乗務員', /ドライバー|タクシー|乗務員|配送/],
+      ['施工管理', /施工管理/], ['電気工事', /電気工事/], ['設計・CAD', /設計|CAD|回路/],
+      ['製造', /製造|工場|オペレーション/], ['看護・医療', /看護|医療/], ['介護', /介護/],
+      ['営業', /営業/], ['店舗・調理', /店舗|調理|接客/], ['とび・解体', /とび|解体/]
+    ];
+    var matches = categories.filter(function (category) { return category[1].test(text); }).map(function (category) { return category[0]; });
+    return matches.length ? matches : [record.job || 'その他'];
+  }
+  function industryValues() {
+    return Array.from(new Set(records.map(function (record) { return industryCategory(record.industry); }))).sort(function (a, b) { return a.localeCompare(b, 'ja'); });
+  }
+  function jobValues() {
+    return Array.from(new Set(records.reduce(function (values, record) { return values.concat(jobCategories(record)); }, []))).sort(function (a, b) { return a.localeCompare(b, 'ja'); });
+  }
+  function fillSelect(select, values) {
+    values.forEach(function (value) {
+      var option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      select.appendChild(option);
+    });
+  }
+  function addKeywordRow() {
+    var row = elements.template.content.cloneNode(true);
+    row.querySelector('.remove-keyword').addEventListener('click', function (event) {
+      var rows = elements.keywordRows.querySelectorAll('.keyword-row');
+      if (rows.length > 1) {
+        event.target.closest('.keyword-row').remove();
+      } else {
+        var onlyRow = event.target.closest('.keyword-row');
+        onlyRow.querySelector('.keyword-text').value = '';
+        onlyRow.querySelector('.keyword-target').value = 'company';
+        onlyRow.querySelector('.keyword-mode').value = 'contains';
+      }
+      render();
+    });
