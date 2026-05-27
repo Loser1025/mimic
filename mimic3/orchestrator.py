@@ -24,7 +24,6 @@ from .agent import (OpenRouterAgent, AccountRotator, _stream_openrouter_api,
                                _CHARS_PER_TOKEN)
 from .tools import ToolRegistry, tools, UserRejectedWriteError
 from .autogit import AutoGit, ReactLog
-from .test_runner import detect_framework, find_related_tests, run_tests
 
 
 def _extract_ps_status(result: str) -> str:
@@ -1451,12 +1450,6 @@ class InteractiveOrchestrator:
                             self.agent.cwd, fn_name, fn_args.get("path", "")
                         )
 
-                    # ── [テスト自動実行] 書き込み成功後に関連テストを実行 ──
-                    if self.agent._config.test_on_write_enabled:
-                        test_output = self._run_tests_for_write(fn_args.get("path", ""))
-                        if test_output:
-                            result_str += f"\n\n{test_output}"
-
                     obs_preview = result_str[:300].replace("\n", " ")
                     safe_print(C.cyan(f"  👁 {obs_preview}"), flush=True)
                     self.react_log.add(
@@ -1534,29 +1527,5 @@ class InteractiveOrchestrator:
                   "confident": is_confident, "response": response[:100]})
         return is_confident
 
-    def _run_tests_for_write(self, path: str) -> str:
-        """書き込み後に関連テストを自動実行する。"""
-        if not path:
-            return ""
-        cwd = str(self.agent.cwd) if self.agent.cwd else "."
-        framework = detect_framework(cwd, path)
-        if framework is None:
-            return ""
-        test_files = find_related_tests(path, cwd)
-        if not test_files:
-            return ""
-        safe_print(C.gray(f"  [テスト自動実行] {len(test_files)} ファイル..."), flush=True)
-        result = run_tests(test_files, cwd, timeout=self.agent._config.test_timeout)
-        icon = "✓" if result.ok else "✗"
-        status = "PASS" if result.ok else "FAIL"
-        summary = (
-            f"[テスト自動実行 {status}] {icon} {result.framework} "
-            f"({result.duration:.1f}秒)\n{result.output}"
-        )
-        safe_print(
-            (C.bold_green if result.ok else C.red)(f"  {icon} テスト {status}"),
-            flush=True,
-        )
-        return summary
 
 # (DualModelOrchestrator は削除済み — Plan モードに統合)
