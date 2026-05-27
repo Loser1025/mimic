@@ -1,0 +1,120 @@
+=== 実行開始: 2026-05-27 15:00:06.221662 ===
+Starting Management Extraction process...
+Browser launching...
+Logging in to https://shindan-kh.com/management/index.php...
+Navigating to target page: https://shindan-kh.com/management/visitor01.php...
+Login and page navigation completed.
+Setting date range: 2026-05-27 to 2026-05-28...
+Applying filters (絞込)...
+Exporting CSV...
+CSV saved to C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\temp_export.csv
+Uploading data to sheet: 管理画面抽出...
+upload_raw_data_to_sheet: 946 行書き込み完了
+Management extraction completed successfully.
+Starting Appointment Aggregation process...
+Browser launching...
+Logging in to https://shindan-kh.com/management/index.php...
+Navigating to target page: https://shindan-kh.com/management/visitor01.php...
+Login and page navigation completed.
+Filtering by status '予約電話'...
+Applying filters (絞込)...
+Exporting CSV...
+CSV saved to C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\temp_export.csv
+Creating pivot and uploading to sheet: 約束集計表...
+upload_pivot_to_sheet: 7 行追記完了
+Appointment aggregation completed successfully.
+=== 全処理完了: 2026-05-27 15:00:57.840758 ===
+=== 実行終亁E 2026/05/27 15:00:58.32 === 
+=== 実行開姁E 2026/05/27 16:00:02.27 === 
+[1/3] 訪問老E��雁E��E.. 
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\count_visitors_final.py", line 256, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\count_visitors_final.py", line 240, in main
+    log_file = open(LOG_PATH, "w", encoding="utf-8")
+PermissionError: [Errno 13] Permission denied: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\automation-visitor-shindan\\run_log.txt'
+[2/3] 提案日シート更新... 
+�Ώۓ�: 2026/05/27
+�����h���C��: ['hibiki', 'honoka', 'thank']
+
+Google Sheets�ɐڑ���...
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run.py", line 369, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run.py", line 352, in main
+    service = build_sheets_service()
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run.py", line 144, in build_sheets_service
+    creds = service_account.Credentials.from_service_account_file(
+        str(SA_PATH), scopes=['https://www.googleapis.com/auth/spreadsheets'],
+    )
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\service_account.py", line 262, in from_service_account_file
+    info, signer = _service_account_info.from_filename(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        filename, require=["client_email", "token_uri"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\_service_account_info.py", line 78, in from_filename
+    with io.open(filename, "r", encoding="utf-8") as json_file:
+         ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\csv-to-sheet\\sa_credentials.json'
+[3/4] 面諁E��シート更新... 
+
+Google Sheets�ɐڑ���...
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 647, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 599, in main
+    service = build_sheets_service()
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 216, in build_sheets_service
+    creds = service_account.Credentials.from_service_account_file(
+        str(SA_PATH), scopes=['https://www.googleapis.com/auth/spreadsheets'],
+    )
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\service_account.py", line 262, in from_service_account_file
+    info, signer = _service_account_info.from_filename(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        filename, require=["client_email", "token_uri"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\_service_account_info.py", line 78, in from_filename
+    with io.open(filename, "r", encoding="utf-8") as json_file:
+         ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\csv-to-sheet\\sa_credentials.json'
+[4/4] 面諁E��紁E���E�未転化）シート更新... 
+
+Google Sheets�ɐڑ���...
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 647, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 599, in main
+    service = build_sheets_service()
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 216, in build_sheets_service
+    creds = service_account.Credentials.from_service_account_file(
+        str(SA_PATH), scopes=['https://www.googleapis.com/auth/spreadsheets'],
+    )
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\service_account.py", line 262, in from_service_account_file
+    info, signer = _service_account_info.from_filename(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        filename, require=["client_email", "token_uri"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\_service_account_info.py", line 78, in from_filename
+    with io.open(filename, "r", encoding="utf-8") as json_file:
+         ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\csv-to-sheet\\sa_credentials.json'
+=== 実行終亁E 2026/05/27 16:00:31.21 === 

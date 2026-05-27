@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bigquery": {
+      "command": "npx",
+      "args": ["-y", "bigquery-mcp-server"],
+      "env": {
+        "GOOGLE_CLOUD_PROJECT": "stream-443709"
+      }
+    }
+  }
+}
