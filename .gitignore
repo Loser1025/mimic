@@ -11,3 +11,10 @@ __pycache__/
 **/token.json
 **/ageless-impulse-*.json
 *service_account*.json
+
+# Node.js
+node_modules/
+
+# 一時・出力ファイル
+*.csv
+*.wav
