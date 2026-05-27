@@ -118,3 +118,96 @@ Traceback (most recent call last):
          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\csv-to-sheet\\sa_credentials.json'
 === 螳溯｡檎ｵゆｺ・ 2026/05/27 16:00:31.21 === 
+=== 螳溯｡碁幕蟋・ 2026/05/27 17:00:02.82 === 
+[1/3] 險ｪ蝠剰・焚髮・ｨ・.. 
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\count_visitors_final.py", line 256, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\automation-visitor-shindan\count_visitors_final.py", line 240, in main
+    log_file = open(LOG_PATH, "w", encoding="utf-8")
+PermissionError: [Errno 13] Permission denied: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\automation-visitor-shindan\\run_log.txt'
+[2/3] 謠先｡域律繧ｷ繝ｼ繝域峩譁ｰ... 
+対象日: 2026/05/27
+処理ドメイン: ['hibiki', 'honoka', 'thank']
+
+Google Sheetsに接続中...
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run.py", line 369, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run.py", line 352, in main
+    service = build_sheets_service()
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run.py", line 144, in build_sheets_service
+    creds = service_account.Credentials.from_service_account_file(
+        str(SA_PATH), scopes=['https://www.googleapis.com/auth/spreadsheets'],
+    )
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\service_account.py", line 262, in from_service_account_file
+    info, signer = _service_account_info.from_filename(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        filename, require=["client_email", "token_uri"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\_service_account_info.py", line 78, in from_filename
+    with io.open(filename, "r", encoding="utf-8") as json_file:
+         ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\csv-to-sheet\\sa_credentials.json'
+[3/4] 髱｢隲・律繧ｷ繝ｼ繝域峩譁ｰ... 
+
+Google Sheetsに接続中...
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 647, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 599, in main
+    service = build_sheets_service()
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 216, in build_sheets_service
+    creds = service_account.Credentials.from_service_account_file(
+        str(SA_PATH), scopes=['https://www.googleapis.com/auth/spreadsheets'],
+    )
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\service_account.py", line 262, in from_service_account_file
+    info, signer = _service_account_info.from_filename(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        filename, require=["client_email", "token_uri"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\_service_account_info.py", line 78, in from_filename
+    with io.open(filename, "r", encoding="utf-8") as json_file:
+         ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\csv-to-sheet\\sa_credentials.json'
+[4/4] 髱｢隲・ｺ育ｴ・律・域悴霆｢蛹厄ｼ峨す繝ｼ繝域峩譁ｰ... 
+
+Google Sheetsに接続中...
+Traceback (most recent call last):
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 647, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 599, in main
+    service = build_sheets_service()
+  File "C:\Users\Loser\Desktop\-\tamalabo\proposal-to-sheet\run_mendan.py", line 216, in build_sheets_service
+    creds = service_account.Credentials.from_service_account_file(
+        str(SA_PATH), scopes=['https://www.googleapis.com/auth/spreadsheets'],
+    )
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\service_account.py", line 262, in from_service_account_file
+    info, signer = _service_account_info.from_filename(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        filename, require=["client_email", "token_uri"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Loser\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\_service_account_info.py", line 78, in from_filename
+    with io.open(filename, "r", encoding="utf-8") as json_file:
+         ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Loser\\Desktop\\-\\tamalabo\\csv-to-sheet\\sa_credentials.json'
+=== 螳溯｡檎ｵゆｺ・ 2026/05/27 17:00:31.75 === 
