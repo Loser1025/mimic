@@ -9,6 +9,7 @@ import threading
 import traceback
 import re
 import sys
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1449,6 +1450,11 @@ class InteractiveOrchestrator:
                         self.auto_git.checkpoint(
                             self.agent.cwd, fn_name, fn_args.get("path", "")
                         )
+                        # ── [書き込み後バリデーション] 構文・反映確認 ──
+                        validation = self._validate_write(fn_name, fn_args)
+                        if validation:
+                            result_str += f"\n\n{validation}"
+                            safe_print(C.yellow(f"  ⚠ {validation.splitlines()[0]}"), flush=True)
 
                     obs_preview = result_str[:300].replace("\n", " ")
                     safe_print(C.cyan(f"  👁 {obs_preview}"), flush=True)
@@ -1477,6 +1483,51 @@ class InteractiveOrchestrator:
         self.agent.conversation.extend(messages[old_conv_len + 1:])
         self.agent.conversation.append({"role": "assistant", "content": fallback})
         return fallback
+
+    def _validate_write(self, fn_name: str, fn_args: dict) -> str:
+        """
+        書き込み成功後の2段階バリデーション。
+        1. .py ファイルは構文チェック（py_compile）
+        2. edit_file / patch_file は変更後文字列の読み返し確認
+        戻り値: 空文字 = 問題なし、メッセージ = 問題あり（AIへの observation に付加される）
+        """
+        path = fn_args.get("path", "")
+        if not path:
+            return ""
+
+        issues: list[str] = []
+
+        # ── 1. 構文チェック（.py のみ）──────────────────────────
+        if path.endswith(".py"):
+            try:
+                r = subprocess.run(
+                    ["python", "-m", "py_compile", path],
+                    capture_output=True, text=True, timeout=10
+                )
+                if r.returncode != 0:
+                    err = (r.stderr or r.stdout).strip()
+                    issues.append(f"[構文エラー] {err}")
+                    log.warning({"event": "syntax_check_failed", "path": path, "error": err[:200]})
+            except Exception as e:
+                log.warning({"event": "syntax_check_error", "path": path, "error": str(e)})
+
+        # ── 2. 書き込み反映確認（edit_file / patch_file のみ）────
+        if fn_name in ("edit_file", "patch_file"):
+            new_string = fn_args.get("new_string") or fn_args.get("replace", "")
+            if new_string:
+                try:
+                    content = Path(path).read_text(encoding="utf-8", errors="replace")
+                    if new_string not in content:
+                        issues.append(
+                            "[書き込み未反映] 変更後の文字列がファイルに存在しません。"
+                            " old_string / search が正確に一致しなかった可能性があります。"
+                            " read_file で現在の内容を確認してから再度実行してください。"
+                        )
+                        log.warning({"event": "write_not_applied", "tool": fn_name, "path": path})
+                except Exception as e:
+                    log.warning({"event": "write_verify_error", "path": path, "error": str(e)})
+
+        return "\n".join(issues)
 
     def _confidence_check(self, fn_name: str, fn_args: dict, messages: list[dict]) -> bool:
         """
