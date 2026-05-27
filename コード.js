@@ -75,3 +75,28 @@ function combineLocation(prefecture, municipality) {
     .filter(function (value) { return value && value !== '—'; })
     .join(' ') || '—';
 }
+
+// 一時的なデバッグ関数: 獲得企業一覧のシート構造を確認する
+function debugInspectSourceSheet() {
+  const SOURCE_SPREADSHEET_ID = '1_xQzjPICr-m7VTcXh9R4AkDsFSCfqOcITKDausm5fuc';
+  const SOURCE_SHEET_GID = '870498158';
+  const ss = SpreadsheetApp.openById(SOURCE_SPREADSHEET_ID);
+  const sheets = ss.getSheets();
+  let targetSheet = sheets.find(s => s.getSheetId().toString() === SOURCE_SHEET_GID);
+  if (!targetSheet) targetSheet = sheets[0];
+  const data = targetSheet.getDataRange().getDisplayValues();
+  const headers = data[0];
+  const sampleRows = data.slice(1, 6);
+  const result = {
+    sheetName: targetSheet.getName(),
+    totalRows: data.length,
+    totalCols: headers.length,
+    headers: headers,
+    sampleRows: sampleRows,
+    vColumnIndex: 21, // V列 = 22番目 = index 21
+    vColumnHeader: headers[21] || 'N/A',
+    vColumnSamples: sampleRows.map(row => row[21] || '')
+  };
+  Logger.log(JSON.stringify(result, null, 2));
+  return JSON.stringify(result, null, 2);
+}
