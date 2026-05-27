@@ -24,6 +24,7 @@ from .agent import (OpenRouterAgent, AccountRotator, _stream_openrouter_api,
                                _CHARS_PER_TOKEN)
 from .tools import ToolRegistry, tools, UserRejectedWriteError
 from .autogit import AutoGit, ReactLog
+from .test_runner import detect_framework, find_related_tests, run_tests
 
 
 def _extract_ps_status(result: str) -> str:
@@ -1202,6 +1203,7 @@ class InteractiveOrchestrator:
         self.agent    = agent
         self.auto_git = auto_git
         self.react_log = ReactLog()
+        self._confidence_retry_counts: dict[str, int] = {}  # 確信度チェックの再試行カウント
 
     @staticmethod
     def _fmt_args(args: dict) -> str:
@@ -1266,6 +1268,7 @@ class InteractiveOrchestrator:
         on_done: 最終回答が確定した瞬間に呼ばれるコールバック(text) → str
                  教訓保存より前に呼ばれるので、MCP自動モードで即返しに使える。
         """
+        self._confidence_retry_counts.clear()  # ターンごとにリセット
         try:
             return self._run_react_inner(user_message, on_done)
         except KeyboardInterrupt:
@@ -1411,6 +1414,20 @@ class InteractiveOrchestrator:
                     )
                     self.react_log.add("action", tool=fn_name, args=fn_args, step=step_count)
 
+                    # ── [確信度チェック] 書き込み前にモデルの自己評価を確認 ──
+                    if (fn_name in write_tools
+                            and fn_name != "delete_file"
+                            and self.agent._config.confidence_check_enabled):
+                        if not self._confidence_check(fn_name, fn_args, messages):
+                            result_str = (
+                                "[確信度不足] 書き込みをスキップしました。"
+                                "ファイルを read_file で再確認してから再度実行してください。"
+                            )
+                            safe_print(C.yellow(f"  ⚠ 確信度不足 → {fn_name} をスキップ"), flush=True)
+                            self.react_log.add("observation", tool=fn_name,
+                                               result=result_str, step=step_count)
+                            tool_results.append({"tool": fn_name, "result": result_str, "call_id": call_id})
+                            continue
                     try:
                         result_str = self._execute_with_intervention(fn_name, fn_args, error_counts)
                     except UserRejectedWriteError as e:
@@ -1433,6 +1450,12 @@ class InteractiveOrchestrator:
                         self.auto_git.checkpoint(
                             self.agent.cwd, fn_name, fn_args.get("path", "")
                         )
+
+                    # ── [テスト自動実行] 書き込み成功後に関連テストを実行 ──
+                    if self.agent._config.test_on_write_enabled:
+                        test_output = self._run_tests_for_write(fn_args.get("path", ""))
+                        if test_output:
+                            result_str += f"\n\n{test_output}"
 
                     obs_preview = result_str[:300].replace("\n", " ")
                     safe_print(C.cyan(f"  👁 {obs_preview}"), flush=True)
@@ -1462,5 +1485,78 @@ class InteractiveOrchestrator:
         self.agent.conversation.append({"role": "assistant", "content": fallback})
         return fallback
 
+    def _confidence_check(self, fn_name: str, fn_args: dict, messages: list[dict]) -> bool:
+        """
+        書き込み前にモデルの確信度を確認する。
+        False = 書き込みをスキップ。同一パスへの2回目以降は常に True（無限ループ防止）。
+        """
+        path = fn_args.get("path", "?")
+        retry_key = f"{fn_name}:{path}"
+        if self._confidence_retry_counts.get(retry_key, 0) >= 1:
+            return True
+        safe_print(C.gray(f"  [確信度チェック] {fn_name}({path})"), flush=True)
+
+        check_messages = list(messages) + [{
+            "role": "user",
+            "content": (
+                f"[確信度チェック] {fn_name}({path}) を実行しようとしています。\n"
+                "現在の情報だけでこの書き込みを正確に行う確信がありますか？\n"
+                "「はい」または「いいえ」で答えてから、1行で理由を述べてください。"
+            ),
+        }]
+
+        try:
+            response = ""
+            for text_chunk, _, _ in _stream_openrouter_api(
+                config=self.agent._config,
+                messages=check_messages,
+                tool_specs=[],
+            ):
+                response += text_chunk
+        except Exception as e:
+            log.warning({"event": "confidence_check_error", "error": str(e)})
+            return True
+
+        low = response.lower()
+        is_confident = not (
+            low.startswith("いいえ") or
+            "いいえ" in low[:20] or
+            low.startswith("no") or
+            "not confident" in low
+        )
+
+        if not is_confident:
+            self._confidence_retry_counts[retry_key] = (
+                self._confidence_retry_counts.get(retry_key, 0) + 1
+            )
+
+        log.info({"event": "confidence_check", "tool": fn_name, "path": path,
+                  "confident": is_confident, "response": response[:100]})
+        return is_confident
+
+    def _run_tests_for_write(self, path: str) -> str:
+        """書き込み後に関連テストを自動実行する。"""
+        if not path:
+            return ""
+        cwd = str(self.agent.cwd) if self.agent.cwd else "."
+        framework = detect_framework(cwd, path)
+        if framework is None:
+            return ""
+        test_files = find_related_tests(path, cwd)
+        if not test_files:
+            return ""
+        safe_print(C.gray(f"  [テスト自動実行] {len(test_files)} ファイル..."), flush=True)
+        result = run_tests(test_files, cwd, timeout=self.agent._config.test_timeout)
+        icon = "✓" if result.ok else "✗"
+        status = "PASS" if result.ok else "FAIL"
+        summary = (
+            f"[テスト自動実行 {status}] {icon} {result.framework} "
+            f"({result.duration:.1f}秒)\n{result.output}"
+        )
+        safe_print(
+            (C.bold_green if result.ok else C.red)(f"  {icon} テスト {status}"),
+            flush=True,
+        )
+        return summary
 
 # (DualModelOrchestrator は削除済み — Plan モードに統合)

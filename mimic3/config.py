@@ -22,6 +22,9 @@ class OpenRouterConfig:
     site_name: str = "Mimic OpenRouter"
     rpm_limit: int = 3
     context_length: int = 0  # モデルのコンテキストウィンドウ（トークン数）、0=不明
+    confidence_check_enabled: bool = True   # 書き込み前の確信度チェック
+    test_on_write_enabled: bool = False     # 書き込み後のテスト自動実行（デフォルトOFF）
+    test_timeout: int = 30                  # テストのタイムアウト秒数
     _key_index: int = field(default=0, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _buckets: list = field(default_factory=list, init=False, repr=False)
@@ -380,6 +383,11 @@ def _generate_env_template(env_path: Path):
         "RPM_LIMIT=20\n\n"
         "# システムプロンプト\n"
         "SYSTEM_PROMPT=あなたは有能なAIアシスタントです。日本語で丁寧に回答してください。\n"
+        "# 確信度チェック（書き込み前にモデルが自己評価）\n"
+        "ENABLE_CONFIDENCE_CHECK=true\n\n"
+        "# テスト自動実行（書き込み成功後に pytest / unittest を実行）\n"
+        "ENABLE_TEST_ON_WRITE=false\n"
+        "TEST_TIMEOUT=30\n"
     )
     env_path.write_text(template, encoding="utf-8")
 
@@ -416,6 +424,9 @@ def load_config(base_dir: Optional[str] = None) -> tuple[OpenRouterConfig, str]:
         return OpenRouterConfig(
             api_keys=api_keys, model=model,
             system_prompt=system_prompt, rpm_limit=rpm_limit,
+            confidence_check_enabled=env.get("ENABLE_CONFIDENCE_CHECK", "true").lower() == "true",
+            test_on_write_enabled=env.get("ENABLE_TEST_ON_WRITE", "false").lower() == "true",
+            test_timeout=int(env.get("TEST_TIMEOUT", "30")),
         ), system_prompt
 
     _generate_env_template(env_path)
