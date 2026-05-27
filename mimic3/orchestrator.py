@@ -1487,7 +1487,7 @@ class InteractiveOrchestrator:
     def _validate_write(self, fn_name: str, fn_args: dict) -> str:
         """
         書き込み成功後の2段階バリデーション。
-        1. .py ファイルは構文チェック（py_compile）
+        1. 言語別構文チェック（.py / .js / .mjs / .json / .yaml / .yml）
         2. edit_file / patch_file は変更後文字列の読み返し確認
         戻り値: 空文字 = 問題なし、メッセージ = 問題あり（AIへの observation に付加される）
         """
@@ -1496,9 +1496,12 @@ class InteractiveOrchestrator:
             return ""
 
         issues: list[str] = []
+        ext = Path(path).suffix.lower()
 
-        # ── 1. 構文チェック（.py のみ）──────────────────────────
-        if path.endswith(".py"):
+        # ── 1. 言語別構文チェック ────────────────────────────────
+
+        # Python
+        if ext == ".py":
             try:
                 r = subprocess.run(
                     ["python", "-m", "py_compile", path],
@@ -1506,10 +1509,46 @@ class InteractiveOrchestrator:
                 )
                 if r.returncode != 0:
                     err = (r.stderr or r.stdout).strip()
-                    issues.append(f"[構文エラー] {err}")
+                    issues.append(f"[構文エラー:Python] {err}")
                     log.warning({"event": "syntax_check_failed", "path": path, "error": err[:200]})
             except Exception as e:
                 log.warning({"event": "syntax_check_error", "path": path, "error": str(e)})
+
+        # JavaScript / MJS / CJS（node --check）
+        elif ext in (".js", ".mjs", ".cjs"):
+            try:
+                r = subprocess.run(
+                    ["node", "--check", path],
+                    capture_output=True, text=True, timeout=10
+                )
+                if r.returncode != 0:
+                    err = (r.stderr or r.stdout).strip()
+                    issues.append(f"[構文エラー:JavaScript] {err}")
+                    log.warning({"event": "syntax_check_failed", "path": path, "error": err[:200]})
+            except FileNotFoundError:
+                pass  # node 未インストール時はスキップ
+            except Exception as e:
+                log.warning({"event": "syntax_check_error", "path": path, "error": str(e)})
+
+        # JSON
+        elif ext == ".json":
+            try:
+                import json as _json
+                _json.loads(Path(path).read_text(encoding="utf-8", errors="replace"))
+            except _json.JSONDecodeError as e:
+                issues.append(f"[構文エラー:JSON] {e}")
+                log.warning({"event": "syntax_check_failed", "path": path, "error": str(e)})
+            except Exception as e:
+                log.warning({"event": "syntax_check_error", "path": path, "error": str(e)})
+
+        # YAML / YML
+        elif ext in (".yaml", ".yml"):
+            try:
+                import yaml as _yaml
+                _yaml.safe_load(Path(path).read_text(encoding="utf-8", errors="replace"))
+            except Exception as e:
+                issues.append(f"[構文エラー:YAML] {e}")
+                log.warning({"event": "syntax_check_failed", "path": path, "error": str(e)})
 
         # ── 2. 書き込み反映確認（edit_file / patch_file のみ）────
         if fn_name in ("edit_file", "patch_file"):
