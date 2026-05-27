@@ -7,8 +7,7 @@ Telegram RAG Bot
 import os
 import chromadb
 from groq import Groq
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from chromadb.utils import embedding_functions
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
@@ -28,13 +27,11 @@ SYSTEM_PROMPT = (
 
 # 利用可能なモデル設定
 MODELS = {
-    "gemini-3":   {"label": "Gemini 3 Flash Preview",       "provider": "gemini",      "model": "gemini-3-flash-preview"},
-    "gemini-2.5": {"label": "Gemini 2.5 Flash",             "provider": "gemini",      "model": "gemini-2.5-flash"},
-    "gemini-2.0": {"label": "Gemini 2.0 Flash",             "provider": "gemini",      "model": "gemini-2.0-flash"},
     "groq-llama":  {"label": "Groq / Llama 3.3 70B",        "provider": "groq",        "model": "llama-3.3-70b-versatile"},
     "groq-llama8": {"label": "Groq / Llama 3.1 8B (高速)",  "provider": "groq",        "model": "llama-3.1-8b-instant"},
+    "gemini":      {"label": "Gemini Flash Latest",          "provider": "gemini",      "model": "gemini-flash-latest"},
 }
-current_model_key = "gemini-3"  # デフォルト
+current_model_key = "groq-llama"  # デフォルト
 chat_mode = False  # Trueのとき資料を使わず直接モデルと会話
 
 CHAT_SYSTEM_PROMPT = "あなたはMollyです。日本語で回答してください。"
@@ -49,10 +46,10 @@ def setup():
     print(f"ChromaDB読み込み完了（チャンク数: {collection.count()}）")
 
     groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    return collection, groq_client, gemini_client
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    return collection, groq_client
 
-collection, groq_client, gemini_client = setup()
+collection, groq_client = setup()
 
 def generate_answer(prompt: str, system_prompt: str = None) -> str:
     """現在選択中のモデルで回答を生成する"""
@@ -70,13 +67,11 @@ def generate_answer(prompt: str, system_prompt: str = None) -> str:
         return response.choices[0].message.content
 
     elif model_config["provider"] == "gemini":
-        response = gemini_client.models.generate_content(
-            model=model_config["model"],
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=sys_prompt
-            )
+        gemini_model = genai.GenerativeModel(
+            model_config["model"],
+            system_instruction=sys_prompt
         )
+        response = gemini_model.generate_content(prompt)
         return response.text
 
 

@@ -1,0 +1,91 @@
+﻿@startuml mimic3_architecture
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName "Segoe UI"
+skinparam ArrowColor #555555
+skinparam ComponentBorderColor #333333
+skinparam ComponentBackgroundColor #EEF5FF
+skinparam DatabaseBorderColor #333333
+skinparam DatabaseBackgroundColor #FFF8DC
+skinparam NoteBackgroundColor #FFFFCC
+skinparam NoteBorderColor #999999
+
+title Mimic3 システムアーキテクチャ
+
+' ═══════════════════════════════════════════════════════════
+' 全体コンポーネント図
+' ═══════════════════════════════════════════════════════════
+
+package "エントリポイント" {
+  component [__main__.py\nmain()] as MAIN #E8F5E9
+  component [mcp_server.py\nMCP Server] as MCP #E8F5E9
+}
+
+package "設定層" {
+  database [".env"] as ENV #FFF8DC
+  component [config.py\nload_config()] as CFG #DDEEFF
+  component [DualConfig] as DCFG #DDEEFF
+  component [OpenRouterConfig] as OCFG #DDEEFF
+}
+
+package "オーケストレーション層" {
+  component [DualModelOrchestrator] as DMO #FFE4B5
+  component [AgentOrchestrator\n(Plan-and-Execute)] as AO #FFE4B5
+  component [InteractiveOrchestrator\n(ReAct)] as IO #FFE4B5
+  component [WorkflowGraph] as WG #FFE4B5
+}
+
+package "AI モデル層" {
+  component [MistralThinker\nMistral Large 3\n(ツールなし)] as THINKER #E0E0FF
+  component [OpenRouterAgent\nOwlAlpha\n(フルツール)] as ACTOR #E0E0FF
+  component [Planner\nJSON mode] as PLANNER #E0E0FF
+  component [Reviewer] as REVIEWER #E0E0FF
+  component [Reflector] as REFLECTOR #E0E0FF
+}
+
+package "ツール層" {
+  component [ToolRegistry] as TR #F0F0F0
+  component [run_powershell] as PS #F5F5F5
+  component [read/write/edit_file] as RF #F5F5F5
+  component [web_search\nfetch_webpage] as WEB #F5F5F5
+  component [list_directory\nglob/search] as FS #F5F5F5
+}
+
+package "インフラ層" {
+  component [AutoGit] as AG #FFDDDD
+  component [TokenBucket\nレート制限] as TL #FFDDDD
+  component [ReactLog] as RL #FFDDDD
+}
+
+' 関係
+MAIN --> CFG : 設定ロード
+MCP --> MAIN : 起動
+ENV --> CFG : 読み込み
+CFG --> DCFG : Mistral あり
+CFG --> OCFG : Mistral なし
+
+MAIN --> DMO : dual モード
+MAIN --> AO : plan モード
+MAIN --> IO : interactive モード
+
+DMO --> THINKER : 計画・評価
+DMO --> IO : 実行委譲
+DMO --> AG : バックアップ
+IO --> ACTOR : ReAct 実行
+AO --> PLANNER : 計画生成
+AO --> REVIEWER : 結果検証
+AO --> REFLECTOR : 最終検証
+AO --> WG : 制御フロー
+AO --> ACTOR : ステップ実行
+
+ACTOR --> TR : ツール呼び出し
+TR --> PS
+TR --> RF
+TR --> WEB
+TR --> FS
+
+ACTOR --> TL : RPM チェック
+ACTOR --> AG : checkpoint
+IO --> RL : ログ記録
+
+@enduml

@@ -1,0 +1,84 @@
+﻿@startuml dual_mode_sequence
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam SequenceArrowThickness 2
+skinparam ParticipantBorderColor #333333
+skinparam ParticipantBackgroundColor #EEF5FF
+
+title DualModelOrchestrator — Thinker/Actor 協調シーケンス
+
+actor ユーザー as U
+participant "DualModelOrchestrator" as DMO
+participant "MistralThinker" as MT
+participant "InteractiveOrchestrator" as IO
+participant "OpenRouterActor" as OA
+participant "AutoGit" as AG
+participant "WorkflowGraph" as WG
+
+== Phase 1: 計画生成 ==
+
+U -> DMO : run(user_message)
+DMO -> MT : plan(user_message)
+activate MT
+MT --> DMO : steps JSON
+deactivate MT
+DMO -> U : 計画表示 (Step 1..N)
+U -> DMO : 承認 [y/N]
+
+== Phase 2: 適応型ワークフロー ==
+
+loop remaining が空になるまで
+
+  DMO -> OA : run_react(step.description)
+  activate OA
+  OA -> AG : backup(cwd)
+  OA --> DMO : step_result
+  deactivate OA
+
+  DMO -> WG : parse_state_updates(result)
+
+  alt ステップ失敗
+    DMO -> WG : resolve_failure()
+    alt retry
+      DMO -> OA : 再実行
+    else skip
+      note right: 次ステップへ
+    else abort
+      DMO --> U : 中断
+    else goto:label
+      DMO -> DMO : ジャンプ先へ
+    end
+  end
+
+  alt ステップ成功
+    DMO -> WG : resolve_success()
+    opt goto:label
+      DMO -> DMO : ジャンプ先へ
+    end
+  end
+
+  DMO -> MT : step_review(goal, executed, result, remaining)
+  activate MT
+  MT --> DMO : decision JSON
+  deactivate MT
+
+  alt action=continue
+    note right: 残りをそのまま続行
+  else action=replan
+    DMO -> MT : 新計画で remaining 差し替え
+    note right: replan_count++
+  else action=done
+    DMO -> DMO : ループ終了
+  end
+
+end
+
+== Phase 3: 最終レビュー ==
+
+DMO -> MT : review(all_summaries)
+activate MT
+MT --> DMO : レビューコメント
+deactivate MT
+DMO --> U : 結果表示
+
+@enduml

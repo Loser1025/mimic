@@ -1,0 +1,112 @@
+﻿@startuml class_diagram
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam ClassBorderColor #333333
+skinparam ClassBackgroundColor #EEF5FF
+
+title Mimic3 クラス関係図
+
+class DualModelOrchestrator {
+  +thinker: MistralThinker
+  +actor_orch: InteractiveOrchestrator
+  +auto_git: AutoGit
+  +run(user_message): str
+  -_execute_adaptive_workflow(steps, goal): str
+  -_execute_workflow_plan(steps): str
+  -_wait_cooldown()
+}
+
+class MistralThinker {
+  +config: MistralConfig
+  +conversation: list
+  +think(user_message): str
+  +plan(user_message): list
+  +review(summary): str
+  +step_review(...): dict
+  -_call_api(messages): str
+  -_stream_call_api(messages, cb): str
+}
+
+class InteractiveOrchestrator {
+  +agent: OpenRouterAgent
+  +auto_git: AutoGit
+  +react_log: ReactLog
+  +run_react(user_message): str
+  -_run_react_inner(user_message): str
+}
+
+class AgentOrchestrator {
+  +planner: OpenRouterAgent
+  +executor: OpenRouterAgent
+  +reflector: OpenRouterAgent
+  +run_with_plan(user_message): str
+  -_parse_plan(text): list
+  -_reflect_and_correct(...): str
+}
+
+class WorkflowGraph {
+  +steps: list<PlanStep>
+  +state: dict
+  +resolve_failure(step): tuple
+  +resolve_success(step): tuple
+  +parse_state_updates(result)
+  +state_set(key, value)
+}
+
+class PlanStep {
+  +index: int
+  +description: str
+  +status: str
+  +result: str
+  +parallel: bool
+  +label: str
+  +on_failure: str
+  +on_success: str
+  +max_iterations: int
+  +join_policy: str
+}
+
+class OpenRouterAgent {
+  +rotator: AccountRotator
+  +tools: ToolRegistry
+  +cwd: str
+  +run(prompt): str
+  +run_stream(prompt, cb): str
+  +set_system_prompt(prompt)
+  +clear_history()
+  -_stream_react_call(messages): tuple
+}
+
+class MistralConfig {
+  +api_key: str
+  +model: str
+  +rpm_limit: int
+  +acquire(): float
+}
+
+class OpenRouterConfig {
+  +api_keys: list
+  +model: str
+  +rpm_limit: int
+  +acquire_key(): tuple
+}
+
+class DualConfig {
+  +thinker: MistralConfig
+  +actor: OpenRouterConfig
+  +is_dual: bool
+}
+
+DualModelOrchestrator --> MistralThinker : 計画・評価
+DualModelOrchestrator --> InteractiveOrchestrator : 実行委譲
+DualModelOrchestrator --> WorkflowGraph : 制御フロー
+InteractiveOrchestrator --> OpenRouterAgent : ReAct 実行
+AgentOrchestrator --> OpenRouterAgent : Plan 実行
+AgentOrchestrator --> WorkflowGraph : 制御フロー
+MistralThinker --> MistralConfig : API設定
+OpenRouterAgent --> OpenRouterConfig : API設定
+DualConfig --> MistralConfig : Thinker設定
+DualConfig --> OpenRouterConfig : Actor設定
+WorkflowGraph --> PlanStep : ステップ管理
+
+@enduml

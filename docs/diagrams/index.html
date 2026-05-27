@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mimic3 技術資料 - 統合ドキュメント</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+        scroll-behavior: smooth;
+    }
+
+    :root {
+        --bg-primary: #1a1a2e;
+        --bg-secondary: #16213e;
+        --bg-tertiary: #0f3460;
+        --text-primary: #e0e0e0;
+        --text-secondary: #a0a0a0;
+        --accent-cyan: #00d4ff;
+        --accent-green: #00ff88;
+        --accent-purple: #bd00ff;
+        --accent-yellow: #ffd700;
+        --accent-orange: #ff8c00;
+        --accent-red: #ff4444;
+        --border-color: #0f3460;
+        --code-bg: #0d1117;
+    }
+
+    body {
+        font-family: "Segoe UI", "Hiragino Sans", "Meiryo", sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        line-height: 1.8;
+    }
+
+    /* ナビゲーション（固定サイドバー） */
+    nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 280px;
+        height: 100vh;
+        background: var(--bg-secondary);
+        border-right: 1px solid var(--border-color);
+        overflow-y: auto;
+        padding: 20px;
+        z-index: 100;
+        transition: box-shadow 0.3s ease;
+    }
+
+    nav.scrolled {
+        box-shadow: 4px 0 20px rgba(0,0,0,0.4);
+    }
+
+    nav h1 {
+        font-size: 1.2em;
+        color: var(--accent-cyan);
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    nav h2 {
+        font-size: 0.9em;
+        color: var(--accent-green);
+        margin: 15px 0 10px 0;
+    }
+
+    nav ul {
+        list-style: none;
+    }
+
+    nav li {
+        margin: 5px 0;
+    }
+
+    nav a {
+        color: var(--text-secondary);
+        text-decoration: none;
+        font-size: 0.85em;
+        display: block;
+        padding: 5px 10px;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+
+    nav a:hover {
+        background: var(--bg-tertiary);
+        color: var(--accent-cyan);
+    }
+
+    nav a.active {
+        background: var(--bg-tertiary);
+        color: var(--accent-cyan);
+        border-left: 3px solid var(--accent-cyan);
+    }
+
+    /* メインコンテンツ */
+    main {
+        margin-left: 280px;
+        padding: 40px;
+        max-width: 1200px;
+    }
+
+    section {
+        background: var(--bg-secondary);
+        border-radius: 12px;
+        padding: 30px;
+        margin-bottom: 40px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        border: 1px solid var(--border-color);
+        scroll-margin-top: 20px;
+    }
+
+    h1 {
+        color: var(--accent-cyan);
+        font-size: 2em;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid var(--border-color);
+    }
+
+    h2 {
+        color: var(--accent-green);
+        font-size: 1.5em;
+        margin: 30px 0 15px 0;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    h3 {
+        color: var(--accent-purple);
+        font-size: 1.2em;
+        margin: 25px 0 10px 0;
+    }
+
+    h4 {
+        color: var(--accent-yellow);
+        font-size: 1em;
+        margin: 20px 0 10px 0;
+    }
+
+    p {
+        margin: 15px 0;
+        color: var(--text-primary);
+    }
+
+    /* テーブル */
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 0.9em;
+    }
+
+    th, td {
+        padding: 12px 15px;
+        text-align: left;
+        border: 1px solid var(--border-color);
+    }
+
+    th {
+        background: var(--bg-tertiary);
+        color: var(--accent-cyan);
+        font-weight: 600;
+    }
+
+    tr:nth-child(even) {
+        background: rgba(15, 52, 96, 0.3);
+    }
+
+    tr:hover {
+        background: rgba(0, 212, 255, 0.1);
+    }
+
+    /* コードブロック */
+    pre {
+        background: var(--code-bg);
+        border-radius: 8px;
+        padding: 20px;
+        overflow-x: auto;
+        margin: 20px 0;
+        border: 1px solid var(--border-color);
+    }
+
+    code {
+        font-family: "Consolas", "Monaco", monospace;
+        font-size: 0.9em;
+        color: var(--accent-green);
+    }
+
+    p code, li code {
+        background: var(--code-bg);
+        padding: 2px 6px;
+        border-radius: 4px;
+        color: var(--accent-orange);
+    }
+
+    /* リスト */
+    ul, ol {
+        margin: 15px 0;
+        padding-left: 30px;
+    }
+
+    li {
+        margin: 8px 0;
+    }
+
+    /* リンク */
+    a {
+        color: var(--accent-cyan);
+        text-decoration: none;
+    }
+
+    a:hover {
+        text-decoration: underline;
+    }
+
+    /* 図表セクション */
+    .diagram-container {
+        background: #fafafa;
+        border-radius: 8px;
+        padding: 20px;
+        margin: 20px 0;
+        text-align: center;
+        cursor: zoom-in;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .diagram-container:hover {
+        transform: scale(1.01);
+        box-shadow: 0 6px 25px rgba(0, 212, 255, 0.15);
+    }
+
+    .diagram-container img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 4px;
+    }
+
+    /* Lightbox モーダル */
+    .lightbox-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.92);
+        z-index: 10000;
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        animation: lbFadeIn 0.3s ease;
+    }
+
+    .lightbox-overlay.active {
+        display: flex;
+    }
+
+    .lightbox-content {
+        max-width: 95vw;
+        max-height: 85vh;
+        overflow: auto;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 30px;
+        box-shadow: 0 0 60px rgba(0, 212, 255, 0.2);
+        text-align: center;
+    }
+
+    .lightbox-content img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 8px;
+    }
+
+    .lightbox-content pre {
+        text-align: left;
+    }
+
+    .lightbox-close {
+        position: fixed;
+        top: 20px;
+        right: 30px;
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 50%;
+        width: 44px;
+        height: 44px;
+        font-size: 1.4em;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+        z-index: 10001;
+    }
+
+    .lightbox-close:hover {
+        background: var(--accent-red);
+        color: white;
+        transform: scale(1.1);
+    }
+
+    .lightbox-hint {
+        color: var(--text-secondary);
+        font-size: 0.85em;
+        margin-top: 12px;
+        text-align: center;
+    }
+
+    /* コードブロックコピーボタン */
+    .code-block-wrapper {
+        position: relative;
+    }
+
+    .copy-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 6px 12px;
+        font-size: 0.8em;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        opacity: 0;
+        z-index: 10;
+    }
+
+    .code-block-wrapper:hover .copy-btn {
+        opacity: 1;
+    }
+
+    .copy-btn:hover {
+        background: var(--accent-cyan);
+        color: var(--bg-primary);
+        border-color: var(--accent-cyan);
+    }
+
+    .copy-btn.copied {
+        background: var(--accent-green);
+        color: var(--bg-primary);
+        border-color: var(--accent-green);
+        opacity: 1;
+    }
+
+    @keyframes lbFadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    .diagram-title {
+        color: var(--accent-cyan);
+        font-size: 1.1em;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+
+    /* バッジ */
+    .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 0.75em;
+        font-weight: 600;
+        margin: 2px;
+    }
+
+    .badge-required { background: var(--accent-red); color: white; }
+    .badge-optional { background: var(--accent-orange); color: black; }
+    .badge-new { background: var(--accent-green); color: black; }
+    .badge-deleted { background: var(--accent-red); color: white; }
+
+    /* フッター */
+    footer {
+        text-align: center;
+        color: var(--text-secondary);
+        margin-top: 60px;
+        padding: 20px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    /* スクロールトップボタン */
+    #scrollTop {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        background: var(--accent-cyan);
+        color: var(--bg-primary);
+        border: none;
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        font-size: 1.5em;
+        cursor: pointer;
+        display: none;
+        z-index: 1000;
+        transition: all 0.3s;
+    }
+
+    #scrollTop:hover {
+        background: var(--accent-green);
+        transform: scale(1.1);
+    }
+
+    /* レスポンシブ */
+    @media (max-width: 768px) {
+        nav {
+            width: 100%;
+            height: auto;
+            position: relative;
+            border-right: none;
+            border-bottom: 1px solid var(--border-color);
+        }
+        main {
+            margin-left: 0;
+            padding: 20px;
+        }
+    }
+
+    /* アニメーション */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    section {
+        animation: fadeIn 0.5s ease-out;
+    }
+</style>
+</head>
+<body>
+
+<!-- ナビゲーション -->
+<nav>
+    <h1>📚 Mimic3 技術資料</h1>
+    
+    <h2>目次</h2>
+    <ul>
+        <li><a href="#overview">1. プロジェクト概要</a></li>
+        <li><a href="#tech-spec">2. 技術仕様</a></li>
+        <li><a href="#architecture">3. アーキテクチャ図</a></li>
+        <li><a href="#dependencies">4. 依存ライブラリ</a></li>
+        <li><a href="#strategy">5. 更新戦略</a></li>
+    </ul>
+
+    <h2>セクション</h2>
+    <ul>
+        <li><a href="#dev-info">開発者情報</a></li>
+        <li><a href="#positioning">独自性の位置づけ</a></li>
+        <li><a href="#dual-model">デュアルモデル</a></li>
+        <li><a href="#workflow">WorkflowGraph</a></li>
+        <li><a href="#auto-git">Auto-Git</a></li>
+        <li><a href="#mcp">MCP連携</a></li>
+        <li><a href="#rate-limit">レート制限</a></li>
+        <li><a href="#context">コンテキスト管理</a></li>
+        <li><a href="#commands">スラッシュコマンド</a></li>
+        <li><a href="#deleted">削除された機能</a></li>
+    </ul>
+</nav>
+
+<!-- メインコンテンツ -->
+<main>
+
+<!-- ============================================================ -->
+<!-- 1. プロジェクト概要 -->
+<!-- ============================================================ -->
+<section id="overview">
+    <h1>1. プロジェクト概要</h1>
+    
+    <div id="dev-info">
+        <h2>1.1 開発者情報</h2>
+        <table>
+            <tr><th>項目</th><th>内容</th></tr>
+            <tr><td>開発者</td><td>Loser1025</td></tr>
+            <tr><td>リポジトリ</td><td><a href="https://github.com/Loser1025/mimic">https://github.com/Loser1025/mimic</a></td></tr>
+            <tr><td>ベースコード</td><td>V4.py（単一ファイルの統合エージェント）</td></tr>
+            <tr><td>モジュール分割ツール</td><td>split_v4.py（V4.py → 10モジュールに自動分割）</td></tr>
+            <tr><td>ライセンス</td><td>明記なし（個人プロジェクト）</td></tr>
+        </table>
+    </div>
+
+    <div id="positioning">
+        <h2>1.2 独自バージョンの位置づけ</h2>
+        <p>Mimic3 は、V4.py と呼ばれる単一ファイルの AI エージェントを <strong>モジュール分割・機能拡張</strong> した独自フォークである。</p>
+        
+        <h3>V4.py（オリジナル）の特徴</h3>
+        <ul>
+            <li>単一ファイル（約 90,000 行）の統合 AI エージェント</li>
+            <li>Gemini API ベースの ReAct ループ</li>
+            <li>ファイル操作・PowerShell 実行・Web 検索を自律実行</li>
+        </ul>
+
+        <h3>Mimic3（本プロジェクト）の独自性</h3>
+        <pre>
+V4.py（単一ファイル・Gemini）
+    │
+    │  split_v4.py によるモジュール分割
+    │  Gemini → OpenRouter/OwlAlpha に変更
+    │  Mistral Thinker 追加
+    │  デュアルモデル対応
+    │  MCP サーバー対応
+    ▼
+Mimic3（マルチモジュール・デュアルモデル）
+        </pre>
+
+        <table>
+            <tr><th>観点</th><th>V4.py（原版）</th><th>Mimic3（独自版）</th></tr>
+            <tr><td>ファイル構成</td><td>単一ファイル</td><td>10モジュールに分割</td></tr>
+            <tr><td>AI モデル</td><td>Gemini（Google）</td><td>OpenRouter/OwlAlpha（Actor）+ Mistral Large 3（Thinker）</td></tr>
+            <tr><td>アーキテクチャ</td><td>単一エージェント ReAct</td><td>最大3層マルチエージェント</td></tr>
+            <tr><td>実行モード</td><td>ReAct のみ</td><td>ReAct / Plan-and-Execute / Dual（3モード）</td></tr>
+            <tr><td>MCP 連携</td><td>なし</td><td>MCP サーバー対応（Claude Code 連携）</td></tr>
+            <tr><td>レート制限</td><td>簡易</td><td>Token Bucket アルゴリズム（RPM/RPD）</td></tr>
+            <tr><td>Auto-Git</td><td>なし</td><td>自動バックアップ・チェックポイント・ロールバック</td></tr>
+            <tr><td>コンテキスト管理</td><td>なし</td><td>自動コンパクション + メッセージ修復</td></tr>
+        </table>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 2. 技術仕様 -->
+<!-- ============================================================ -->
+<section id="tech-spec">
+    <h1>2. 技術仕様</h1>
+
+    <div id="dual-model">
+        <h2>2.1 デュアルモデルアーキテクト（DualModelOrchestrator）</h2>
+        <p>V4 には存在しない最大の追加機能。Mistral Large 3 を「テックリード（Thinker）」、OwlAlpha を「実行者（Actor）」として分離した2モデル構成。</p>
+        
+        <pre>
+V4:   ユーザー → Gemini（思考+実行）→ 結果
+Mimic3: ユーザー → Mistral（計画）→ OwlAlpha（実行）→ Mistral（評価）→ 結果
+        </pre>
+
+        <h3>クラス構成</h3>
+        <pre><code>class DualModelOrchestrator:
+    def __init__(self, thinker: MistralThinker, 
+                 actor_orch: InteractiveOrchestrator, 
+                 auto_git: AutoGit)</code></pre>
+
+        <h3>実行フロー</h3>
+        <pre>
+ユーザー入力
+    │
+    ▼
+[1] Thinker.plan(user_message)
+    └→ Mistral API → JSON steps
+    │
+    ▼
+[2] ユーザー承認 (y/N)
+    └→ 否決: Thinker履歴修正 → 次の入力へ
+    │
+    ▼
+[3] _execute_adaptive_workflow(steps, goal)
+    ┌──────────────────────────────────────────────┐
+    │ for each step:                               │
+    │   a. Actor.clear_history()                   │
+    │   b. actor_orch.run_react(step.description)  │
+    │   c. Thinker.step_review() → continue/replan │
+    │      └→ replan: remaining を新計画で差し替え │
+    │      └→ done: ループ終了                     │
+    └──────────────────────────────────────────────┘
+    │
+    ▼
+[4] Thinker.review(all_summaries)
+    └→ Mistral API → レビューコメント
+    │
+    ▼
+[5] ユーザーに制御を返す
+        </pre>
+
+        <h3>主要定数</h3>
+        <table>
+            <tr><th>定数</th><th>値</th><th>説明</th></tr>
+            <tr><td>MAX_STEP_RETRY</td><td>2</td><td>1ステップあたりの最大リトライ回数</td></tr>
+            <tr><td>MAX_REPLAN_COUNT</td><td>3</td><td>再計画の上限回数</td></tr>
+            <tr><td>_THINKER_COOLDOWN</td><td>40秒</td><td>Thinker 連続呼び出し防止の冷却時間</td></tr>
+        </table>
+    </div>
+
+    <div id="mistral-thinker">
+        <h2>2.2 MistralThinker</h2>
+        <p>Mistral Large 3 を「テックリード」として活用し、<strong>ツール呼び出しを一切行わず</strong> 指示書テキストのみを生成する専用モジュール。</p>
+
+        <h3>主要メソッド</h3>
+        <table>
+            <tr><th>メソッド</th><th>戻り値</th><th>説明</th></tr>
+            <tr><td>think(user_message)</td><td>str</td><td>Actor への詳細指示書を生成</td></tr>
+            <tr><td>plan(user_message)</td><td>list[dict]</td><td>ユーザータスクを PlanStep リストに分解</td></tr>
+            <tr><td>review(actor_summary)</td><td>str</td><td>Actor の実行結果をレビュー</td></tr>
+            <tr><td>step_review(...)</td><td>dict</td><td>1ステップ実行後に評価・再計画</td></tr>
+        </table>
+
+        <h3>step_review の戻り値</h3>
+        <pre><code>{"action": "continue", "reason": "..."}                    # 続行
+{"action": "replan", "reason": "...", "steps": [...]}     # 再計画
+{"action": "done", "reason": "..."}                        # 完了</code></pre>
+
+        <h3>エラーハンドリング</h3>
+        <table>
+            <tr><th>例外</th><th>説明</th></tr>
+            <tr><td>MistralAPIError</td><td>HTTP エラー（status, message を持つ）</td></tr>
+            <tr><td>MistralRateLimitError</td><td>429 レート制限（サブクラス）</td></tr>
+        </table>
+        <p>リトライ: 最大 <code>MAX_RETRIES=4</code> 回、指数バックオフ（<code>BASE_BACKOFF=2.0</code>, <code>MAX_BACKOFF=30.0</code>）</p>
+    </div>
+
+    <div id="workflow">
+        <h2>2.3 WorkflowGraph</h2>
+        <p>グラフベースのワークフロー制御エンジン。V4 にはない機能。</p>
+
+        <h3>PlanStep データクラス</h3>
+        <pre><code>@dataclass
+class PlanStep:
+    index: int
+    description: str
+    status: str = "pending"          # pending/running/done/failed/retrying/skipped
+    result: str = ""
+    parallel: bool = False           # True: 並列実行可能
+    label: str = ""                  # goto のジャンプ先ラベル
+    on_failure: str = "retry"        # retry/skip/abort/goto:&lt;label&gt;
+    on_success: str = ""             # ""(次へ)/goto:&lt;label&gt;/abort
+    max_iterations: int = 0          # goto ループ上限（0=安全上限10）
+    join_policy: str = "all"         # all/any/first</code></pre>
+
+        <h3>エッジ遷移</h3>
+        <table>
+            <tr><th>directive</th><th>動作</th></tr>
+            <tr><td>retry</td><td>リトライ（MAX_STEP_RETRY 回まで）</td></tr>
+            <tr><td>skip</td><td>スキップして次へ</td></tr>
+            <tr><td>abort</td><td>ワークフロー全体を即座に中断</td></tr>
+            <tr><td>goto:&lt;label&gt;</td><td>指定ラベルのステップへジャンプ</td></tr>
+        </table>
+
+        <h3>共有ステート</h3>
+        <pre><code>graph.state_set("api_key", "abc123")          # キー/値保存
+graph.state_get("api_key")                     # → "abc123"
+graph.parse_state_updates(result)              # [STATE: key=value] を自動パース</code></pre>
+    </div>
+
+    <div id="plan-execute">
+        <h2>2.4 Plan-and-Execute オーケストレーター</h2>
+        <p>V4 の ReAct ループを拡張し、Planner → Executor → Reviewer の3エージェント協業を実現。</p>
+
+        <h3>3エージェント構成</h3>
+        <pre>
+Planner (JSON計画) → Executor (ツール実行) → Reviewer (結果検証)
+                                              ↓
+                                         Reflector (最終検証)
+        </pre>
+
+        <h3>並列バッチ制御</h3>
+        <table>
+            <tr><th>join_policy</th><th>動作</th></tr>
+            <tr><td>all</td><td>全並列ステップの完了を待つ（デフォルト）</td></tr>
+            <tr><td>any</td><td>いずれか1つが成功した時点で残りをスキップ</td></tr>
+            <tr><td>first</td><td>成功/失敗を問わず最初に完了した結果で次へ進む</td></tr>
+        </table>
+    </div>
+
+    <div id="react">
+        <h2>2.5 ReAct ループ（InteractiveOrchestrator）</h2>
+        <p>Reason + Act パターンの対話型オーケストレーター。AI が自律的にツールを呼び出して最終回答を導く。</p>
+
+        <h3>実行フロー</h3>
+        <pre>
+AutoGit バックアップ
+       │
+       ▼
+Thought (AI が思考をストリーミング出力)
+       │
+       ├── ツールなし → 最終回答を返す
+       │
+       ▼
+Action (ツール呼び出し)
+       │
+       ├── 読み取り系のみ → 並列実行（ThreadPoolExecutor）
+       └── 書き込み系含む → 逐次実行 + 承認確認
+       │
+       ▼
+Observation (ツール結果を AI に返す)
+       │
+       └── Thought へ戻る（ループ）
+        </pre>
+
+        <h3>主要定数</h3>
+        <table>
+            <tr><th>定数</th><th>値</th><th>説明</th></tr>
+            <tr><td>MAX_AUTO_RETRY</td><td>2</td><td>エラー自動リトライ上限</td></tr>
+            <tr><td>MAX_REACT_STEPS</td><td>60</td><td>ReAct ループ上限</td></tr>
+        </table>
+    </div>
+
+    <div id="openrouter">
+        <h2>2.6 OpenRouterAgent</h2>
+        <p>OpenRouter API を使った ReAct ループエージェント。</p>
+
+        <h3>コンテキスト圧縮</h3>
+        <pre><code>COMPACTION_THRESHOLD_CHARS = 3_000_000  # 約75%のコンテキスト使用率で発動
+COMPACTION_KEEP_RECENT = 20             # 直近20メッセージを保持</code></pre>
+
+        <h3>リトライ戦略</h3>
+        <table>
+            <tr><th>エラー</th><th>動作</th></tr>
+            <tr><td>429 RateLimitError</td><td>指数バックオフ + ジッター</td></tr>
+            <tr><td>5xx ServerError</td><td>バックオフ + メッセージトリム</td></tr>
+            <tr><td>接続エラー</td><td>バックオフ + リトライ</td></tr>
+            <tr><td>その他 API エラー</td><td>即座に例外送出</td></tr>
+        </table>
+        <p>リトライ上限: <code>MAX_RETRIES=5</code>、<code>BASE_BACKOFF=2.0</code>、<code>MAX_BACKOFF=60.0</code></p>
+    </div>
+
+    <div id="rate-limit">
+        <h2>2.7 Token Bucket レートリミッター</h2>
+        <p>レート制限の高度化。V4 の簡易カウントから Token Bucket アルゴリズムに変更。</p>
+        <pre><code>class TokenBucket:
+    def __init__(self, rpm_limit: int = 15, rpd_limit: int = 1500):</code></pre>
+        <ul>
+            <li>バケツ容量 = <code>rpm_limit</code> トークン</li>
+            <li>補充レート = <code>rpm_limit / 60</code> トークン/秒</li>
+            <li>リクエストごとに 1 トークンを消費</li>
+            <li>RPD 無制限モード対応（<code>rpd_limit=0</code>）</li>
+            <li>スレッドセーフ（<code>threading.Lock</code> による排他制御）</li>
+        </ul>
+    </div>
+
+    <div id="context">
+        <h2>2.8 コンテキスト管理の高度化</h2>
+        <table>
+            <tr><th>機能</th><th>V4</th><th>Mimic3</th></tr>
+            <tr><td>自動コンパクション</td><td>なし</td><td>300万文字閾値で圧縮</td></tr>
+            <tr><td>メッセージ修復</td><td>なし</td><td>孤立 tool_calls 除去</td></tr>
+            <tr><td>メッセージトリム</td><td>なし</td><td>古い tool メッセージ優先削除</td></tr>
+            <tr><td>ツール出力キャッシュ</td><td>なし</td><td>10000文字超で自動キャッシュ</td></tr>
+        </table>
+    </div>
+
+    <div id="tools">
+        <h2>2.9 ツールレジストリ</h2>
+        <p>23種のツールが登録されている。</p>
+        <table>
+            <tr><th>カテゴリ</th><th>ツール名</th></tr>
+            <tr><td>読み取り</td><td>read_file, read_tool_cache, get_repo_map, list_directory, glob, grep</td></tr>
+            <tr><td>書き込み</td><td>write_file, edit_file, patch_file, append_file, create_directory, move_file, copy_file, delete_file</td></tr>
+            <tr><td>実行</td><td>run_powershell</td></tr>
+            <tr><td>検索</td><td>web_search, fetch_webpage</td></tr>
+            <tr><td>ブラウザ</td><td>browser_navigate, browser_click, browser_type, browser_get_text, browser_screenshot, browser_close</td></tr>
+        </table>
+    </div>
+
+    <div id="mcp">
+        <h2>2.10 MCP サーバー対応</h2>
+        <p>V4 にはない、Claude Code との MCP 連携。</p>
+        <table>
+            <tr><th>ツール名</th><th>説明</th></tr>
+            <tr><td>agent_run</td><td>フルエージェント実行（ReAct ループ + AutoGit）</td></tr>
+            <tr><td>agent_terminal</td><td>インタラクティブモードでターミナル起動</td></tr>
+        </table>
+        <p>通信方式: MCP stdio プロトコル</p>
+    </div>
+
+    <div id="commands">
+        <h2>2.11 スラッシュコマンドの拡張</h2>
+        <table>
+            <tr><th>コマンド</th><th>V4</th><th>Mimic3</th></tr>
+            <tr><td>/mode</td><td>なし</td><td>interactive/plan/dual 切替</td></tr>
+            <tr><td>/undo</td><td>なし</td><td>Auto-Git ロールバック</td></tr>
+            <tr><td>/diff</td><td>なし</td><td>バックアップからの差分</td></tr>
+            <tr><td>/history</td><td>なし</td><td>ReAct ログ表示</td></tr>
+            <tr><td>/export</td><td>なし</td><td>Markdown エクスポート</td></tr>
+            <tr><td>/autoexport</td><td>なし</td><td>定期自動エクスポート</td></tr>
+            <tr><td>/think</td><td>なし</td><td>推論モード切替</td></tr>
+            <tr><td>/task</td><td>なし</td><td>タスクゴール管理</td></tr>
+        </table>
+    </div>
+
+    <div id="auto-git">
+        <h2>2.12 Auto-Git システム</h2>
+        <p>V4 にはない、タスク実行時の安全ネット機能。</p>
+        <table>
+            <tr><th>機能</th><th>V4</th><th>Mimic3</th></tr>
+            <tr><td>タスク前バックアップ</td><td>なし</td><td>git init + 自動コミット</td></tr>
+            <tr><td>書き込み後チェックポイント</td><td>なし</td><td>ツール成功時に自動コミット</td></tr>
+            <tr><td>ロールバック</td><td>なし</td><td>/undo コマンドで即座に復元</td></tr>
+            <tr><td>差分表示</td><td>なし</td><td>/diff コマンド</td></tr>
+        </table>
+    </div>
+
+    <div id="deleted">
+        <h2>2.13 削除・変更された機能</h2>
+        <table>
+            <tr><th>項目</th><th>V4</th><th>Mimic3</th></tr>
+            <tr><td>AI プロバイダ</td><td>Gemini（Google）</td><td>OpenRouter（OwlAlpha）</td></tr>
+            <tr><td>API 通信</td><td>Google API SDK</td><td>urllib（標準ライブラリのみ）</td></tr>
+            <tr><td>Wikipedia ツール</td><td>あり</td><td>削除</td></tr>
+            <tr><td>RAG 機能</td><td>あり（RAG ドキュメント参照）</td><td>削除</td></tr>
+            <tr><td>教訓保存</td><td>あり（lessons.json）</td><td>削除</td></tr>
+            <tr><td>対話型プロンプト</td><td>あり</td><td>削除（MCP に委譲）</td></tr>
+        </table>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 3. アーキテクチャ図 -->
+<!-- ============================================================ -->
+<section id="architecture">
+    <h1>3. アーキテクチャ図</h1>
+
+    <h2>3.1 全体アーキテクチャ（コンポーネント図）</h2>
+    <div class="diagram-container">
+        <img src="mimic3_architecture.png" alt="Mimic3 System Architecture">
+    </div>
+
+    <h2>3.2 クラス関係図</h2>
+    <div class="diagram-container">
+        <img src="class_diagram.png" alt="Class Diagram">
+    </div>
+
+    <h2>3.3 デュアルモードシーケンス図</h2>
+    <div class="diagram-container">
+        <img src="dual_mode_sequence.png" alt="Dual Mode Sequence Diagram">
+    </div>
+
+    <h2>3.4 ReAct ループ図</h2>
+    <div class="diagram-container">
+        <img src="react_loop.png" alt="ReAct Loop Diagram">
+    </div>
+
+    <h2>3.5 ワークフロー状態遷移図</h2>
+    <div class="diagram-container">
+        <img src="workflow_graph_state.png" alt="Workflow Graph State Diagram">
+    </div>
+
+    <h2>3.6 3つの実行モード</h2>
+    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                    ユーザー (stdin)                          │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│              main.py — interactive_loop()                    │
+│  モード切替: interactive / plan / dual                       │
+└──────┬──────────────────┬───────────────────┬───────────────┘
+       │                  │                   │
+       ▼                  ▼                   ▼
+┌──────────────┐ ┌────────────────┐  ┌──────────────────────┐
+│ Interactive  │ │    Agent       │  │  DualModel           │
+│ Orchestrator │ │  Orchestrator  │  │  Orchestrator         │
+│ (ReAct)      │ │ (Plan&Execute) │  │  ┌─────────────────┐ │
+└──────┬───────┘ └───────┬────────┘  │  │ MistralThinker  │ │
+        │                │           │  │ (thinker.py)    │ │
+        │                │           │  └────────┬────────┘ │
+        ▼                ▼           │           │          │
+┌──────────────────────────────┐     │  ┌────────▼────────┐ │
+│     OpenRouterAgent          │◄────┘  │ WorkflowGraph   │ │
+│     (agent.py)               │        │ + Actor実行     │ │
+│  ┌──────────┐ ┌───────────┐  │        └─────────────────┘ │
+│  │ReActループ│ │ツール実行 │  │                            │
+│  └──────────┘ └───────────┘  │                            │
+└──────────────────────────────┘                            │
+        │                                                   │
+        ▼                                                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    tools.py — ToolRegistry                   │
+│  read_file / write_file / edit_file / run_powershell / ...  │
+└─────────────────────────────────────────────────────────────┘
+    </pre>
+
+    <h2>3.7 Dual モード タイムライン図</h2>
+    <pre>
+ユーザー入力
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Phase 1: 計画生成 (Thinker)                             │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐          │
+│  │ plan()   │───▶│ JSON生成 │───▶│ ユーザー │          │
+│  │ (Mistral)│    │ (ストリーム)│   │ 承認[y/N]│          │
+│  └──────────┘    └──────────┘    └──────────┘          │
+└─────────────────────────────────────────────────────────┘
+    │ 承認
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Phase 2: 適応型ワークフロー (AdaptiveWorkflow)          │
+│                                                         │
+│  ┌─────────┐   ┌─────────┐   ┌──────────────┐         │
+│  │ Actor   │──▶│ Thinker │──▶│ action判定   │         │
+│  │ 実行    │   │ step_   │   │ continue/    │         │
+│  │(ReAct)  │   │ review()│   │ replan/done  │         │
+│  └─────────┘   └─────────┘   └──────────────┘         │
+│       ▲                            │                    │
+│       │         replan時           │                    │
+│       └────────────────────────────┘                    │
+│  (WorkflowGraph: on_failure/on_success/goto 処理)       │
+└─────────────────────────────────────────────────────────┘
+    │ 全ステップ完了
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Phase 3: 最終レビュー (Thinker)                         │
+│  ┌──────────┐    ┌──────────┐                          │
+│  │ review() │───▶│ 完了報告 │──▶ ユーザーへ返却        │
+│  │ (Mistral)│    │ 課題・推奨│                          │
+│  └──────────┘    └──────────┘                          │
+└─────────────────────────────────────────────────────────┘
+    </pre>
+
+    <h2>3.8 データフロー全体像</h2>
+    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                        入力層                               │
+│  CLI 引数  │  対話入力  │  MCP ツール呼び出し               │
+│  --prompt  │  stdin     │  agent_run                        │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      コア処理                               │
+│  config.py  │  モード分岐  │  DualModelOrchestrator          │
+│  環境設定   │  dual/inter  │  AgentOrchestrator              │
+│  ロード     │  active/plan │  InteractiveOrchestrator        │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      AI モデル                              │
+│  Mistral Large 3 (Thinker)  │  OpenRouter OwlAlpha (Actor)  │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                        出力層                               │
+│  stdout  │  mimic.log  │  react_log.md  │  AutoGit コミット │
+└─────────────────────────────────────────────────────────────┘
+    </pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- 4. 依存ライブラリ -->
+<!-- ============================================================ -->
+<section id="dependencies">
+    <h1>4. 依存ライブラリ</h1>
+
+    <h2>4.1 現在の依存関係</h2>
+    
+    <h3>標準ライブラリのみ（追加インストール不要）</h3>
+    <table>
+        <tr><th>モジュール</th><th>使用箇所</th></tr>
+        <tr><td>urllib.request</td><td>API 通信（OpenRouter, Mistral）</td></tr>
+        <tr><td>http.client</td><td>接続エラーハンドリング</td></tr>
+        <tr><td>json</td><td>シリアライズ/デシリアライズ</td></tr>
+        <tr><td>threading</td><td>並列実行・ロック制御</td></tr>
+        <tr><td>concurrent.futures</td><td>ThreadPoolExecutor</td></tr>
+        <tr><td>subprocess</td><td>PowerShell 実行</td></tr>
+        <tr><td>tempfile</td><td>一時ファイル</td></tr>
+        <tr><td>pathlib</td><td>パス操作</td></tr>
+        <tr><td>dataclasses</td><td>データクラス</td></tr>
+        <tr><td>ast</td><td>Python 構文解析</td></tr>
+        <tr><td>difflib</td><td>差分生成</td></tr>
+        <tr><td>re</td><td>正規表現</td></tr>
+        <tr><td>logging</td><td>ログ出力</td></tr>
+        <tr><td>collections</td><td>deque</td></tr>
+        <tr><td>uuid</td><td>ツール呼び出し ID 生成</td></tr>
+        <tr><td>base64</td><td>MCP サーバー（EncodedCommand）</td></tr>
+        <tr><td>asyncio</td><td>MCP サーバー</td></tr>
+        <tr><td>io</td><td>エンコーディング</td></tr>
+        <tr><td>os</td><td>環境変数</td></tr>
+        <tr><td>sys</td><td>システム操作</td></tr>
+        <tr><td>time</td><td>待機・タイムスタンプ</td></tr>
+        <tr><td>math</td><td>計算</td></tr>
+        <tr><td>fnmatch</td><td>glob パターン</td></tr>
+        <tr><td>datetime</td><td>日時処理</td></tr>
+    </table>
+
+    <h3>外部ライブラリ</h3>
+    <table>
+        <tr><th>ライブラリ</th><th>用途</th><th>必須</th></tr>
+        <tr><td>mcp</td><td>MCP サーバー通信</td><td><span class="badge badge-optional">MCP 使用時のみ</span></td></tr>
+        <tr><td>playwright</td><td>ブラウザ操作</td><td><span class="badge badge-optional">ブラウザ使用時のみ</span></td></tr>
+    </table>
+
+    <h2>4.2 V4 からの変更点</h2>
+    <table>
+        <tr><th>ライブラリ</th><th>V4</th><th>Mimic3</th></tr>
+        <tr><td>google-generativeai</td><td>必須</td><td><span class="badge badge-deleted">削除</span></td></tr>
+        <tr><td>requests</td><td>使用</td><td><span class="badge badge-deleted">削除</span>（urllib に変更）</td></tr>
+        <tr><td>mcp</td><td>なし</td><td><span class="badge badge-new">追加</span></td></tr>
+        <tr><td>playwright</td><td>なし</td><td><span class="badge badge-new">追加</span></td></tr>
+    </table>
+
+    <h2>4.3 軽量化の効果</h2>
+    <p>V4 では <code>google-generativeai</code> SDK と <code>requests</code> が必要だったが、Mimic3 では標準ライブラリの <code>urllib</code> に置き換えたことで、<strong>通常運用時は追加インストールが不要</strong>になった。</p>
+    <pre><code># V4 の依存
+pip install google-generativeai requests
+
+# Mimic3 の依存（通常運用時）
+# 追加インストール不要
+
+# MCP サーバー使用時のみ
+pip install mcp
+
+# ブラウザ操作使用時のみ
+pip install playwright
+playwright install</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- 5. 更新戦略 -->
+<!-- ============================================================ -->
+<section id="strategy">
+    <h1>5. 更新戦略</h1>
+
+    <h2>5.1 独自機能の維持方法</h2>
+
+    <h3>モジュール構造の維持</h3>
+    <p>現在の10モジュール構成を維持し、機能追加は既存モジュール内で行う。</p>
+    <pre>
+mimic3/
+├── __init__.py      # パッケージ初期化
+├── __main__.py      # エントリポイント
+├── main.py          # 対話ループ・モード切替
+├── agent.py         # OpenRouterAgent（ReAct ループ）
+├── thinker.py       # MistralThinker（テックリード）
+├── orchestrator.py  # 4種のオーケストレーター
+├── config.py        # 設定管理
+├── tools.py         # ツールレジストリ
+├── autogit.py       # Auto-Git システム
+├── commands.py      # スラッシュコマンド
+├── mcp_server.py    # MCP サーバー
+├── utils.py         # ユーティリティ
+└── SPEC.md          # 仕様書
+    </pre>
+
+    <h3>設定ファイルの管理</h3>
+    <p><code>.env</code> ファイルで API キーとモデル設定を管理。テンプレート自動生成機能により、新規セットアップが容易。</p>
+    <pre><code># Thinker 設定
+MISTRAL_API_KEY=your_key
+MISTRAL_MODEL=mistral-large-latest
+MISTRAL_RPM_LIMIT=2
+
+# Actor 設定
+OPENROUTER_KEY_1=your_key_1
+OPENROUTER_KEY_2=your_key_2
+OPENROUTER_KEY_3=your_key_3
+OPENROUTER_MODEL=openrouter/owl-alpha
+RPM_LIMIT=4</code></pre>
+
+    <h3>テスト戦略</h3>
+    <p><code>test_keys.py</code> による API キーの健全性チェックを維持。</p>
+    <pre><code>python -m mimic3.test_keys</code></pre>
+
+    <h2>5.2 機能拡張のロードマップ</h2>
+
+    <h3>短期（1-3ヶ月）</h3>
+    <table>
+        <tr><th>優先度</th><th>機能</th><th>説明</th></tr>
+        <tr><td>高</td><td>モデル追加</td><td>新しい無料モデル（Gemma 3, DeepSeek V3 等）のサポート</td></tr>
+        <tr><td>高</td><td>エラーハンドリング強化</td><td>Thinker の JSON パース失敗時の復旧力向上</td></tr>
+        <tr><td>中</td><td>パフォーマンス最適化</td><td>ツールキャッシュの効率化</td></tr>
+        <tr><td>中</td><td>ドキュメント整備</td><td>SPEC.md の継続的更新</td></tr>
+    </table>
+
+    <h3>中期（3-6ヶ月）</h3>
+    <table>
+        <tr><th>優先度</th><th>機能</th><th>説明</th></tr>
+        <tr><td>高</td><td>マルチモデルの動的切替</td><td>タスクに応じた最適モデル自動選択</td></tr>
+        <tr><td>中</td><td>プラグインシステム</td><td>外部ツールの動的ロード</td></tr>
+        <tr><td>中</td><td>Web UI</td><td>ブラウザベースの管理画面</td></tr>
+        <tr><td>低</td><td>分散実行</td><td>複数マシンでの並列実行</td></tr>
+    </table>
+
+    <h3>長期（6ヶ月以上）</h3>
+    <table>
+        <tr><th>優先度</th><th>機能</th><th>説明</th></tr>
+        <tr><td>中</td><td>自律学習</td><td>実行結果からの自動改善</td></tr>
+        <tr><td>低</td><td>マルチモーダル</td><td>画像・音声入力のサポート</td></tr>
+        <tr><td>低</td><td>チーム協調</td><td>複数エージェントの協調作業</td></tr>
+    </table>
+
+    <h2>5.3 互換性維持のための注意点</h2>
+
+    <h3>API 互換性</h3>
+    <ul>
+        <li>OpenRouter API は OpenAI 互換フォーマットを採用。API 仕様変更時は <code>_call_openrouter_api()</code> と <code>_stream_openrouter_api()</code> のみ修正すればよい。</li>
+        <li>Mistral API も OpenAI 互換。同様に <code>_call_api()</code> と <code>_stream_call_api()</code> を修正。</li>
+    </ul>
+
+    <h3>モデル変更時の影響範囲</h3>
+    <table>
+        <tr><th>変更箇所</th><th>影響を受けるモジュール</th></tr>
+        <tr><td>Actor モデル変更</td><td>config.py, agent.py</td></tr>
+        <tr><td>Thinker モデル変更</td><td>config.py, thinker.py</td></tr>
+        <tr><td>システムプロンプト変更</td><td>config.py, main.py</td></tr>
+        <tr><td>ツール追加</td><td>tools.py, orchestrator.py</td></tr>
+    </table>
+
+    <h3>バージョン管理</h3>
+    <p>Auto-Git システムにより、すべての変更は自動的に Git で追跡される。問題が発生した場合は <code>/undo</code> で即座に復元可能。</p>
+    <pre><code># ロールバック
+/undo
+
+# 差分確認
+/diff</code></pre>
+
+    <h2>5.4 セキュリティ考慮事項</h2>
+    <table>
+        <tr><th>項目</th><th>対策</th></tr>
+        <tr><td>API キー管理</td><td>.env ファイル（.gitignore で除外）</td></tr>
+        <tr><td>書き込み承認</td><td>ReAct モードでのユーザー確認</td></tr>
+        <tr><td>自動バックアップ</td><td>Auto-Git による変更追跡</td></tr>
+        <tr><td>構文チェック</td><td>Python ファイル編集後の自動検証</td></tr>
+        <tr><td>ツール実行制限</td><td>ホワイトリスト方式（登録ツールのみ実行可能）</td></tr>
+    </table>
+
+    <h2>付録</h2>
+
+    <h3>A. ファイル構成と行数</h3>
+    <table>
+        <tr><th>ファイル</th><th>行数</th><th>概要</th></tr>
+        <tr><td>orchestrator.py</td><td>~1,800</td><td>4種のオーケストレーター</td></tr>
+        <tr><td>agent.py</td><td>~650</td><td>OpenRouterAgent</td></tr>
+        <tr><td>thinker.py</td><td>~500</td><td>MistralThinker</td></tr>
+        <tr><td>tools.py</td><td>~1,000</td><td>ツールレジストリ（23ツール）</td></tr>
+        <tr><td>utils.py</td><td>~450</td><td>ユーティリティ</td></tr>
+        <tr><td>config.py</td><td>~260</td><td>設定管理</td></tr>
+        <tr><td>main.py</td><td>~320</td><td>対話ループ</td></tr>
+        <tr><td>autogit.py</td><td>~280</td><td>Auto-Git</td></tr>
+        <tr><td>commands.py</td><td>~110</td><td>スラッシュコマンド</td></tr>
+        <tr><td>mcp_server.py</td><td>~220</td><td>MCP サーバー</td></tr>
+        <tr><td>SPEC.md</td><td>~570</td><td>仕様書</td></tr>
+        <tr><td><strong>合計</strong></td><td><strong>~6,160</strong></td><td></td></tr>
+    </table>
+
+    <h3>B. 用語集</h3>
+    <table>
+        <tr><th>用語</th><th>説明</th></tr>
+        <tr><td>ReAct</td><td>Reason + Act の略。AI が思考→実行→観察を繰り返すパターン</td></tr>
+        <tr><td>Thinker</td><td>Mistral Large 3 を使用する計画・評価専用 AI</td></tr>
+        <tr><td>Actor</td><td>OwlAlpha を使用する実行専用 AI</td></tr>
+        <tr><td>Planner</td><td>タスクをステップに分解する AI</td></tr>
+        <tr><td>Executor</td><td>ステップをツールで実行する AI</td></tr>
+        <tr><td>Reviewer</td><td>実行結果を検証する AI</td></tr>
+        <tr><td>Reflector</td><td>最終結果を自己検証する AI</td></tr>
+        <tr><td>Token Bucket</td><td>レート制限のアルゴリズム</td></tr>
+        <tr><td>WorkflowGraph</td><td>グラフベースのワークフロー制御</td></tr>
+        <tr><td>Auto-Git</td><td>自動 Git バックアップ・ロールバック</td></tr>
+        <tr><td>MCP</td><td>Model Context Protocol。AI と外部ツールの通信プロトコル</td></tr>
+    </table>
+</section>
+
+<!-- フッター -->
+<footer>
+    <p>Mimic3 技術資料 - 統合ドキュメント</p>
+    <p>ベース: V4.py（単一ファイルの統合エージェント）| 開発者: Loser1025</p>
+    <p>本資料は Mimic3 プロジェクトのコードベースを基に作成された。</p>
+</footer>
+
+</main>
+
+<!-- スクロールトップボタン -->
+<button id="scrollTop" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">↑</button>
+
+<script>
+    // スクロールトップボタンの表示/非表示
+    window.addEventListener('scroll', function() {
+        var btn = document.getElementById('scrollTop');
+        if (window.scrollY > 300) {
+            btn.style.display = 'block';
+        } else {
+            btn.style.display = 'none';
+        }
+    });
+
+    // アクティブなセクションのハイライト
+    var sections = document.querySelectorAll('section[id]');
+    var navLinks = document.querySelectorAll('nav a');
+
+    window.addEventListener('scroll', function() {
+        var current = '';
+        sections.forEach(function(section) {
+            var sectionTop = section.offsetTop;
+            if (scrollY >= sectionTop - 100) {
+                current = section.getAttribute('id');
+            }
+        });
+
+        navLinks.forEach(function(link) {
+            link.classList.remove('active');
+            if (link.getAttribute('href') === '#' + current) {
+                link.classList.add('active');
+            }
+        });
+    });
+
+    // ===== 1. スムーズスクロール =====
+    document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
+        anchor.addEventListener('click', function(e) {
+            e.preventDefault();
+            var target = document.querySelector(this.getAttribute('href'));
+            if (target) {
+                var offset = 40;
+                var top = target.getBoundingClientRect().top + window.scrollY - offset;
+                window.scrollTo({ top: top, behavior: 'smooth' });
+            }
+        });
+    });
+
+    // ===== 2. 固定ナビゲーションのスクロール効果 =====
+    var navEl = document.querySelector('nav');
+    if (navEl) {
+        window.addEventListener('scroll', function() {
+            if (window.scrollY > 50) {
+                navEl.classList.add('scrolled');
+            } else {
+                navEl.classList.remove('scrolled');
+            }
+        });
+    }
+
+    // ===== 3. 図表拡大モーダル =====
+    (function() {
+        var overlay = document.createElement('div');
+        overlay.className = 'lightbox-overlay';
+        overlay.id = 'lightbox';
+
+        var closeBtn = document.createElement('button');
+        closeBtn.className = 'lightbox-close';
+        closeBtn.innerHTML = '✕';
+        closeBtn.setAttribute('aria-label', '閉じる');
+
+        var content = document.createElement('div');
+        content.className = 'lightbox-content';
+
+        var hint = document.createElement('p');
+        hint.className = 'lightbox-hint';
+        hint.textContent = 'ESC キーまたは ✕ ボタンで閉じる';
+
+        overlay.appendChild(closeBtn);
+        overlay.appendChild(content);
+        overlay.appendChild(hint);
+        document.body.appendChild(overlay);
+
+        // 図表コンテナクリック
+        document.querySelectorAll('.diagram-container').forEach(function(container) {
+            container.addEventListener('click', function(e) {
+                if (e.target.closest('a')) return;
+                content.innerHTML = '';
+                var img = this.querySelector('img');
+                var title = this.querySelector('.diagram-title');
+                if (title) {
+                    var titleClone = title.cloneNode(true);
+                    titleClone.style.color = 'var(--accent-cyan)';
+                    titleClone.style.fontSize = '1.2em';
+                    titleClone.style.marginBottom = '20px';
+                    content.appendChild(titleClone);
+                }
+                if (img) {
+                    var imgClone = img.cloneNode(true);
+                    imgClone.style.maxWidth = '90vw';
+                    imgClone.style.maxHeight = '75vh';
+                    content.appendChild(imgClone);
+                } else {
+                    // pre 要素（ASCII図表）の場合
+                    var pre = this.querySelector('pre');
+                    if (pre) {
+                        var preClone = pre.cloneNode(true);
+                        content.appendChild(preClone);
+                    }
+                }
+                overlay.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            });
+        });
+
+        function closeLightbox() {
+            overlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+        closeBtn.addEventListener('click', closeLightbox);
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeLightbox();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeLightbox();
+        });
+    })();
+
+    // ===== 4. コードブロックコピーボタン =====
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            // 既にラップ済みならスキップ
+            if (pre.parentElement.classList.contains('code-block-wrapper')) return;
+
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.innerHTML = '📋 コピー';
+            btn.setAttribute('aria-label', 'コードをコピー');
+
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var codeText = pre.textContent;
+                navigator.clipboard.writeText(codeText).then(function() {
+                    btn.innerHTML = '✅ コピー済み';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.innerHTML = '📋 コピー';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                }).catch(function() {
+                    btn.innerHTML = '❌ 失敗';
+                    setTimeout(function() {
+                        btn.innerHTML = '📋 コピー';
+                    }, 2000);
+                });
+            });
+        });
+    })();
+</script>
+
+</body>
+</html>

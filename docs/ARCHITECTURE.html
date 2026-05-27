@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mimic3 システムアーキテクチャ</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border-color: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-orange: #d29922;
+            --accent-red: #f85149;
+            --accent-purple: #bc8cff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--accent-blue);
+            font-size: 2.2em;
+            margin-bottom: 10px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        .subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+
+        h2 {
+            color: var(--accent-green);
+            font-size: 1.5em;
+            margin: 40px 0 20px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h3 {
+            color: var(--accent-orange);
+            font-size: 1.2em;
+            margin: 30px 0 15px 0;
+        }
+
+        .diagram-container {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 25px;
+            margin: 20px 0 40px 0;
+            overflow-x: auto;
+        }
+
+        .diagram-caption {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.95em;
+            margin-top: 15px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .diagram-caption .caption-number {
+            color: var(--accent-purple);
+            font-weight: bold;
+        }
+
+        .mermaid {
+            display: flex;
+            justify-content: center;
+        }
+
+        /* Mermaid ダークテーマ用カスタマイズ */
+        .mermaid .node rect,
+        .mermaid .node circle,
+        .mermaid .node ellipse,
+        .mermaid .node polygon,
+        .mermaid .node path {
+            fill: var(--bg-tertiary) !important;
+            stroke: var(--accent-blue) !important;
+        }
+
+        .mermaid .label {
+            color: var(--text-primary) !important;
+        }
+
+        .mermaid .edgeLabel {
+            background-color: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+        }
+
+        .mermaid .actor {
+            fill: var(--bg-tertiary) !important;
+            stroke: var(--accent-green) !important;
+        }
+
+        .mermaid line {
+            stroke: var(--text-secondary) !important;
+        }
+
+        /* 固定ナビゲーション */
+        .section-nav {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px 30px;
+            margin-bottom: 40px;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            background-color: rgba(22, 27, 34, 0.95);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            transition: box-shadow 0.3s ease;
+        }
+
+        .section-nav.scrolled {
+            box-shadow: 0 6px 30px rgba(0,0,0,0.6);
+        }
+
+        .section-nav h3 {
+            margin-top: 0;
+            color: var(--accent-blue);
+        }
+
+        .section-nav ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .section-nav li {
+            margin: 8px 0;
+        }
+
+        .section-nav a {
+            color: var(--accent-blue);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .section-nav a:hover {
+            color: var(--accent-green);
+            text-decoration: underline;
+        }
+
+        /* 図表拡大モーダル */
+        .diagram-container {
+            cursor: zoom-in;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .diagram-container:hover {
+            transform: scale(1.01);
+            box-shadow: 0 6px 25px rgba(88, 166, 255, 0.15);
+        }
+
+        .diagram-container.zoomed {
+            cursor: zoom-out;
+        }
+
+        .lightbox-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.92);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .lightbox-overlay.active {
+            display: flex;
+        }
+
+        .lightbox-content {
+            max-width: 95vw;
+            max-height: 85vh;
+            overflow: auto;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 0 60px rgba(88, 166, 255, 0.2);
+        }
+
+        .lightbox-content .mermaid {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .lightbox-close {
+            position: fixed;
+            top: 20px;
+            right: 30px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
+            font-size: 1.4em;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 10001;
+        }
+
+        .lightbox-close:hover {
+            background: var(--accent-red);
+            color: white;
+            transform: scale(1.1);
+        }
+
+        .lightbox-hint {
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            margin-top: 12px;
+            text-align: center;
+        }
+
+        /* コードブロックコピーボタン */
+        .code-block-wrapper {
+            position: relative;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 0.8em;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            opacity: 0;
+        }
+
+        .code-block-wrapper:hover .copy-btn {
+            opacity: 1;
+        }
+
+        .copy-btn:hover {
+            background: var(--accent-blue);
+            color: var(--bg-primary);
+            border-color: var(--accent-blue);
+        }
+
+        .copy-btn.copied {
+            background: var(--accent-green);
+            color: var(--bg-primary);
+            border-color: var(--accent-green);
+            opacity: 1;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .footer {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            h1 { font-size: 1.6em; }
+            .diagram-container { padding: 15px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦉 Mimic3 システムアーキテクチャ</h1>
+        <p class="subtitle">Multi-Model Intelligent Multi-Agent Interactive Collaboration System v3</p>
+
+        <!-- 目次ナビゲーション -->
+        <nav class="section-nav">
+            <h3>📋 目次</h3>
+            <ul>
+                <li><a href="#diagram-1">図1: 全体アーキテクチャ</a></li>
+                <li><a href="#diagram-2">図2: 3つの実行モード</a></li>
+                <li><a href="#diagram-3">図3: DualModelOrchestrator 協調ロジック（シーケンス図）</a></li>
+                <li><a href="#diagram-4">図4: Thinker ↔ Actor 協調の詳細フロー</a></li>
+                <li><a href="#diagram-5">図5: WorkflowGraph 状態遷移</a></li>
+                <li><a href="#diagram-6">図6: ReAct ループ（InteractiveOrchestrator）</a></li>
+                <li><a href="#diagram-7">図7: Plan-and-Execute ループ（AgentOrchestrator）</a></li>
+                <li><a href="#diagram-8">図8: データフロー全体像</a></li>
+                <li><a href="#diagram-9">図9: クラス関係図</a></li>
+            </ul>
+        </nav>
+
+        <!-- ============================================ -->
+        <!-- 図1: 全体アーキテクチャ -->
+        <!-- ============================================ -->
+        <h2 id="diagram-1">1. 全体アーキテクチャ</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-1">
+graph TB
+    subgraph Entry["エントリポイント"]
+        MAIN["__main__.py<br/>main()"]
+        MCP["mcp_server.py<br/>MCP Server"]
+    end
+
+    subgraph Config["設定層"]
+        ENV[".env ファイル"]
+        CFG["config.py<br/>load_config()"]
+        DCFG["DualConfig<br/>(Thinker + Actor)"]
+        OCFG["OpenRouterConfig<br/>(Actor 単体)"]
+    end
+
+    subgraph Orchestrator["オーケストレーション層"]
+        DMO["DualModelOrchestrator"]
+        AO["AgentOrchestrator<br/>(Plan-and-Execute)"]
+        IO["InteractiveOrchestrator<br/>(ReAct)"]
+        WG["WorkflowGraph<br/>(状態機械)"]
+    end
+
+    subgraph AI["AI モデル層"]
+        THINKER["MistralThinker<br/>(Mistral Large 3)<br/>ツール呼び出しなし"]
+        ACTOR["OpenRouterAgent<br/>(OwlAlpha)<br/>フルツール使用"]
+        PLANNER["Planner<br/>(OpenRouter + JSON mode)"]
+        REVIEWER["Reviewer<br/>(OpenRouter)"]
+        REFLECTOR["Reflector<br/>(OpenRouter)"]
+    end
+
+    subgraph Tools["ツール層"]
+        TR["ToolRegistry"]
+        PS["run_powershell"]
+        RF["read_file / write_file<br/>edit_file / patch_file"]
+        WEB["web_search<br/>fetch_webpage"]
+        FS["list_directory<br/>glob / search_files<br/>get_repo_map"]
+    end
+
+    subgraph Infra["インフラ層"]
+        AG["AutoGit<br/>自動バックアップ"]
+        TL["TokenBucket<br/>レート制限"]
+        RL["ReactLog<br/>会話ログ"]
+    end
+
+    MAIN --> CFG
+    MCP --> MAIN
+    ENV --> CFG
+    CFG --> DCFG
+    CFG --> OCFG
+
+    MAIN --> DMO
+    MAIN --> AO
+    MAIN --> IO
+    DMO --> THINKER
+    DMO --> IO
+    DMO --> AG
+    IO --> ACTOR
+    AO --> PLANNER
+    AO --> REVIEWER
+    AO --> REFLECTOR
+    AO --> WG
+    AO --> ACTOR
+
+    ACTOR --> TR
+    TR --> PS
+    TR --> RF
+    TR --> WEB
+    TR --> FS
+
+    ACTOR --> TL
+    ACTOR --> AG
+    IO --> RL
+    DMO --> AG
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図1:</span> Mimic3 の全体アーキテクチャ。6つのレイヤー（エントリポイント、設定、オーケストレーション、AIモデル、ツール、インフラ）で構成される。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図2: 3つの実行モード -->
+        <!-- ============================================ -->
+        <h2 id="diagram-2">2. 3つの実行モード</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-2">
+graph LR
+    USER["ユーザー入力"] --> MODE{モード選択}
+
+    MODE -->|dual| DUAL["Dual モード<br/>Thinker + Actor"]
+    MODE -->|interactive| REACT["Interactive モード<br/>ReAct ループ"]
+    MODE -->|plan| PLAN["Plan モード<br/>Plan-and-Execute"]
+
+    DUAL --> RESULT["最終結果"]
+    REACT --> RESULT
+    PLAN --> RESULT
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図2:</span> Mimic3 が提供する3つの実行モード。dual（Thinker + Actor協調）、interactive（ReActループ）、plan（Plan-and-Execute）がある。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図3: DualModelOrchestrator シーケンス図 -->
+        <!-- ============================================ -->
+        <h2 id="diagram-3">3. DualModelOrchestrator 協調ロジック</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-3">
+sequenceDiagram
+    autonumber
+    participant U as ユーザー
+    participant DMO as DualModelOrchestrator
+    participant MT as MistralThinker
+    participant IO as InteractiveOrchestrator
+    participant OA as OpenRouterActor
+    participant AG as AutoGit
+    participant WG as WorkflowGraph
+
+    U->>DMO: run(user_message)
+
+    rect rgb(173, 216, 230)
+        Note over DMO,MT: Phase 1: 計画生成
+        DMO->>MT: plan(user_message)
+        MT-->>DMO: steps JSON
+        DMO->>U: 計画表示 (Step 1..N)
+        U->>DMO: 承認 [y/N]
+    end
+
+    rect rgb(144, 238, 144)
+        Note over DMO,OA,MT: Phase 2: 適応型ワークフロー実行
+        loop 各ステップ (remaining が空になるまで)
+            DMO->>OA: run_react(step.description)
+            OA->>AG: backup(cwd)
+            OA-->>DMO: step_result
+            DMO->>WG: parse_state_updates(result)
+
+            alt ステップ失敗
+                DMO->>WG: resolve_failure()
+                alt retry
+                    DMO->>OA: 再実行
+                alt skip
+                    Note over DMO: 次ステップへ
+                alt abort
+                    DMO-->>U: 中断
+                alt goto:label
+                    DMO->>DMO: ジャンプ先へ
+                end
+            end
+
+            alt ステップ成功
+                DMO->>WG: resolve_success()
+                alt goto:label
+                    DMO->>DMO: ジャンプ先へ
+                end
+            end
+
+            rect rgb(255, 255, 224)
+                Note over DMO,MT: Thinker ステップ評価
+                DMO->>MT: step_review(goal, executed, result, remaining)
+                MT-->>DMO: decision JSON
+                alt action=continue
+                    Note over DMO: 残りをそのまま続行
+                alt action=replan
+                    DMO->>MT: 新計画で remaining を差し替え
+                    Note over DMO: replan_count++
+                alt action=done
+                    DMO->>DMO: ループ終了
+                end
+            end
+        end
+    end
+
+    rect rgb(255, 228, 225)
+        Note over DMO,MT: Phase 3: 最終レビュー
+        DMO->>MT: review(all_summaries)
+        MT-->>DMO: レビューコメント
+        DMO-->>U: 結果表示
+    end
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図3:</span> DualModelOrchestrator の3フェーズ協調ロジック。計画生成→適応型ワークフロー実行→最終レビューの流れを示すシーケンス図。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図4: Thinker ↔ Actor 協調の詳細フロー -->
+        <!-- ============================================ -->
+        <h2 id="diagram-4">4. Thinker ↔ Actor 協調の詳細フロー</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-4">
+stateDiagram-v2
+    [*] --> ThinkerPlan: ユーザー入力
+
+    ThinkerPlan: Thinker が計画生成
+    state ThinkerPlan {
+        [*] --> PlanJSON
+        PlanJSON: JSON ステップ生成
+        PlanJSON --> UserApproval
+        UserApproval: ユーザー承認
+    }
+
+    ThinkerPlan --> AdaptiveLoop: 承認後
+
+    AdaptiveLoop: 適応型ループ
+    state AdaptiveLoop {
+        [*] --> ActorExecute
+        ActorExecute: Actor がステップ実行
+        ActorExecute --> StepEval
+        StepEval: Thinker がステップ評価
+
+        state StepEval {
+            [*] --> Decision
+            Decision: action 判定
+            Decision --> Continue: continue
+            Decision --> Replan: replan
+            Decision --> Done: done
+        }
+
+        StepEval --> ActorExecute: continue
+        StepEval --> ReplanSteps: replan
+        ReplanSteps: 残りステップ差し替え
+        ReplanSteps --> ActorExecute
+    }
+
+    AdaptiveLoop --> ThinkerReview: 全ステップ完了
+
+    ThinkerReview: Thinker が最終レビュー
+    state ThinkerReview {
+        [*] --> ReviewOutput
+        ReviewOutput: 完了報告・課題・推奨
+    }
+
+    ThinkerReview --> [*]: ユーザーへ結果
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図4:</span> Thinker（計画・評価）と Actor（実行）の協調を示す状態図。continue / replan / done の3分岐による適応型制御。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図5: WorkflowGraph 状態遷移 -->
+        <!-- ============================================ -->
+        <h2 id="diagram-5">5. WorkflowGraph 状態遷移</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-5">
+stateDiagram-v2
+    direction LR
+
+    state "PlanStep 状態" as PS {
+        [*] --> pending
+        pending --> running: 実行開始
+        running --> done: 成功
+        running --> failed: 失敗
+        failed --> retrying: retry
+        retrying --> running: 再実行
+        retrying --> skipped: 上限超過
+        failed --> skipped: skip
+    }
+
+    state "エッジ解決" as ER {
+        state "on_failure" as OF {
+            [*] --> retry
+            [*] --> skip
+            [*] --> abort
+            [*] --> goto
+        }
+        state "on_success" as OS {
+            [*] --> next
+            [*] --> abort
+            [*] --> goto
+        }
+    }
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図5:</span> WorkflowGraph の PlanStep 状態遷移とエッジ解決（on_failure / on_success）の状態図。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図6: ReAct ループ -->
+        <!-- ============================================ -->
+        <h2 id="diagram-6">6. ReAct ループ（InteractiveOrchestrator）</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-6">
+flowchart TD
+    START["run_react(user_message)"] --> BACKUP["AutoGit.backup()"]
+    BUILD["コンテキスト構築"] --> LOOP{"ReAct ループ<br/>max 60 steps"}
+
+    BACKUP --> BUILD
+
+    LOOP --> STREAM["ストリーミング API 呼び出し"]
+    STREAM --> HAS_TOOL{"ツール呼び出し<br/>あり?"}
+
+    HAS_TOOL -->|なし| FINAL["最終回答<br/>→ 会話履歴保存 → 返却"]
+    HAS_TOOL -->|あり| PARALLEL{"読み取りのみ<br/>複数?"}
+
+    PARALLEL -->|はい| PAR_EXEC["並列ツール実行<br/>ThreadPoolExecutor"]
+    PARALLEL -->|いいえ| SEQ_EXEC["逐次ツール実行<br/>+ AutoGit checkpoint"]
+
+    PAR_EXEC --> OBS["Observation を<br/>messages に追加"]
+    SEQ_EXEC --> OBS
+
+    OBS --> LOOP
+
+    FINAL --> END["終了"]
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図6:</span> InteractiveOrchestrator の ReAct ループ。思考→行動→観測のサイクルと、並列/逐次ツール実行の分岐。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図7: Plan-and-Execute ループ -->
+        <!-- ============================================ -->
+        <h2 id="diagram-7">7. Plan-and-Execute ループ（AgentOrchestrator）</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-7">
+flowchart TD
+    START["run_with_plan()"] --> PLAN["Planner: ステップ生成"]
+    PLAN --> BATCH["バッチグループ化<br/>parallel=T/F で分割"]
+
+    BATCH --> EXEC_LOOP{"バッチループ"}
+    EXEC_LOOP --> SEQUENTIAL{"逐次バッチ?"}
+    SEQUENTIAL -->|はい| SEQ["逐次実行<br/>+ Reviewer 非同期投入"]
+    SEQUENTIAL -->|いいえ| PAR["並列実行<br/>ThreadPoolExecutor"]
+
+    SEQ --> REVIEWER_FUTURE["Reviewer Future<br/>次のバッチ前に結果収集"]
+    PAR --> NEXT_BATCH
+
+    REVIEWER_FUTURE --> HANDLE{"Reviewer 結果"}
+    HANDLE -->|ok| NEXT_BATCH
+    HANDLE -->|fail| RETRY{"リトライ<br/>可能?"}
+    RETRY -->|はい| SEQ
+    RETRY -->|いいえ| NEXT_BATCH
+
+    NEXT_BATCH --> EXEC_LOOP
+
+    EXEC_LOOP -->|全バッチ完了| SUMMARY["最終まとめ生成"]
+    SUMMARY --> REFLECT["Reflector: 最終検証"]
+    REFLECT -->|問題あり| CORRECT["Executor で修正"]
+    REFLECT -->|OK| RESULT["結果返却"]
+    CORRECT --> RESULT
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図7:</span> AgentOrchestrator の Plan-and-Execute ループ。バッチグループ化、並列/逐次実行、Reviewer による品質管理を含む。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図8: データフロー全体像 -->
+        <!-- ============================================ -->
+        <h2 id="diagram-8">8. データフロー全体像</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-8">
+flowchart LR
+    subgraph Input["入力層"]
+        CLI["CLI 引数<br/>--prompt / --auto-prompt"]
+        STDIN["対話入力<br/>stdin"]
+        MCP_IN["MCP ツール呼び出し<br/>agent_run"]
+    end
+
+    subgraph Core["コア処理"]
+        CFG["config.py<br/>環境設定ロード"]
+        ROUTER["モード分岐<br/>dual / interactive / plan"]
+        DUAL["DualModelOrchestrator"]
+        REACT["InteractiveOrchestrator"]
+        PLAN["AgentOrchestrator"]
+    end
+
+    subgraph Models["AI モデル"]
+        MISTRAL["Mistral Large 3<br/>Thinker"]
+        OPENROUTER["OpenRouter<br/>OwlAlpha Actor"]
+    end
+
+    subgraph Output["出力層"]
+        STDOUT["stdout 出力"]
+        LOG["mimic.log"]
+        REACT_LOG["react_log.md"]
+        GIT["AutoGit コミット"]
+    end
+
+    CLI --> CFG
+    STDIN --> ROUTER
+    MCP_IN --> CFG
+
+    CFG --> ROUTER
+    ROUTER --> DUAL
+    ROUTER --> REACT
+    ROUTER --> PLAN
+
+    DUAL --> MISTRAL
+    DUAL --> REACT
+    REACT --> OPENROUTER
+    PLAN --> OPENROUTER
+
+    MISTRAL --> STDOUT
+    OPENROUTER --> STDOUT
+    OPENROUTER --> LOG
+    REACT --> REACT_LOG
+    DUAL --> GIT
+    REACT --> GIT
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図8:</span> Mimic3 のデータフロー全体像。入力層→コア処理→AIモデル→出力層の流れを示す。</p>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 図9: クラス関係図 -->
+        <!-- ============================================ -->
+        <h2 id="diagram-9">9. クラス関係図</h2>
+        <div class="diagram-container">
+            <div class="mermaid" id="mermaid-9">
+classDiagram
+    class DualModelOrchestrator {
+        +MistralThinker thinker
+        +InteractiveOrchestrator actor_orch
+        +AutoGit auto_git
+        +run(user_message) str
+        -_execute_adaptive_workflow(steps, goal) str
+        -_execute_workflow_plan(steps) str
+        -_wait_cooldown()
+    }
+
+    class MistralThinker {
+        +MistralConfig config
+        +conversation history
+        +think(user_message) str
+        +plan(user_message) list
+        +review(summary) str
+        +step_review(goal, executed, result, remaining) dict
+        -_call_api(messages) str
+        -_stream_call_api(messages, callback) str
+    }
+
+    class InteractiveOrchestrator {
+        +OpenRouterAgent agent
+        +AutoGit auto_git
+        +ReactLog react_log
+        +run_react(user_message) str
+        -_run_react_inner(user_message) str
+        -_execute_with_intervention(name, args) str
+    }
+
+    class AgentOrchestrator {
+        +OpenRouterAgent planner
+        +OpenRouterAgent executor
+        +OpenRouterAgent reflector
+        +run_with_plan(user_message) str
+        -_parse_plan(text) list
+        -_execute_step(step, agent) str
+        -_reflect_and_correct(goal, result) str
+    }
+
+    class WorkflowGraph {
+        +list~PlanStep~ steps
+        +dict state
+        +resolve_failure(step) tuple
+        +resolve_success(step) tuple
+        +parse_state_updates(result) dict
+        +add_step(step) void
+        +get_next_step() PlanStep
+    }
+
+    class OpenRouterAgent {
+        +OpenRouterConfig config
+        +ToolRegistry tools
+        +TokenBucket rate_limiter
+        +chat(messages) str
+        +chat_with_tools(messages) str
+    }
+
+    class AutoGit {
+        +str repo_path
+        +backup(cwd) str
+        +checkpoint(message) str
+        +rollback(commit_hash) bool
+    }
+
+    class TokenBucket {
+        +int capacity
+        +float refill_rate
+        +consume(tokens) bool
+        +wait_and_consume(tokens) void
+    }
+
+    class ReactLog {
+        +str log_path
+        +add_entry(role, content) void
+        +save() void
+        +load() list
+    }
+
+    class ToolRegistry {
+        +dict tools
+        +register(name, func) void
+        +get(name) callable
+        +list_tools() list
+        +execute(name, args) str
+    }
+
+    DualModelOrchestrator --> MistralThinker : uses
+    DualModelOrchestrator --> InteractiveOrchestrator : delegates
+    DualModelOrchestrator --> AutoGit : uses
+    DualModelOrchestrator --> WorkflowGraph : manages
+
+    InteractiveOrchestrator --> OpenRouterAgent : uses
+    InteractiveOrchestrator --> AutoGit : uses
+    InteractiveOrchestrator --> ReactLog : logs
+
+    AgentOrchestrator --> OpenRouterAgent : uses planner/executor/reflector
+    AgentOrchestrator --> WorkflowGraph : manages
+
+    OpenRouterAgent --> ToolRegistry : uses
+    OpenRouterAgent --> TokenBucket : rate limits
+            </div>
+            <p class="diagram-caption"><span class="caption-number">図9:</span> Mimic3 の主要クラスとその関係。DualModelOrchestrator を中心としたクラス図。</p>
+        </div>
+
+        <footer class="footer">
+            <p>🦉 Mimic3 Architecture Documentation | Generated from ARCHITECTURE.md</p>
+            <p>Mermaid.js v10 でレンダリング | ダークテーマ対応</p>
+        </footer>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            },
+            sequence: {
+                diagramMarginX: 50,
+                diagramMarginY: 10,
+                actorMargin: 50,
+                width: 150,
+                height: 65,
+                boxMargin: 10,
+                boxTextMargin: 5,
+                noteMargin: 10,
+                messageMargin: 35,
+                mirrorActors: true,
+                bottomMarginAdj: 1,
+                useMaxWidth: true,
+                rightAngles: false,
+                showSequenceNumbers: true
+            },
+            state: {
+                useMaxWidth: true
+            },
+            class: {
+                useMaxWidth: true
+            },
+            themeVariables: {
+                darkMode: true,
+                background: '#161b22',
+                mainBkg: '#21262d',
+                nodeBorder: '#58a6ff',
+                clusterBkg: '#1c2128',
+                titleColor: '#c9d1d9',
+                edgeLabelBackground: '#21262d',
+                lineColor: '#8b949e',
+                fontSize: '14px'
+            }
+        });
+    </script>
+
+    <!-- インタラクティブ機能 -->
+    <script>
+        // ===== 1. スムーズスクロール =====
+        document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                var target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    var offset = 80;
+                    var top = target.getBoundingClientRect().top + window.scrollY - offset;
+                    window.scrollTo({ top: top, behavior: 'smooth' });
+                }
+            });
+        });
+
+        // ===== 2. 固定ナビゲーションのスクロール効果 =====
+        var nav = document.querySelector('.section-nav');
+        if (nav) {
+            window.addEventListener('scroll', function() {
+                if (window.scrollY > 50) {
+                    nav.classList.add('scrolled');
+                } else {
+                    nav.classList.remove('scrolled');
+                }
+            });
+        }
+
+        // ===== 3. 図表拡大モーダル =====
+        (function() {
+            // オーバーレイ作成
+            var overlay = document.createElement('div');
+            overlay.className = 'lightbox-overlay';
+            overlay.id = 'lightbox';
+
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'lightbox-close';
+            closeBtn.innerHTML = '✕';
+            closeBtn.setAttribute('aria-label', '閉じる');
+
+            var content = document.createElement('div');
+            content.className = 'lightbox-content';
+
+            var hint = document.createElement('p');
+            hint.className = 'lightbox-hint';
+            hint.textContent = 'ESC キーまたは ✕ ボタンで閉じる';
+
+            overlay.appendChild(closeBtn);
+            overlay.appendChild(content);
+            overlay.appendChild(hint);
+            document.body.appendChild(overlay);
+
+            // 図表コンテナにクリックイベント
+            document.querySelectorAll('.diagram-container').forEach(function(container) {
+                container.addEventListener('click', function(e) {
+                    // リンククリック時は無視
+                    if (e.target.closest('a')) return;
+
+                    var mermaid = this.querySelector('.mermaid');
+                    var caption = this.querySelector('.diagram-caption');
+                    content.innerHTML = '';
+                    if (mermaid) {
+                        var clone = mermaid.cloneNode(true);
+                        clone.style.transform = 'scale(1.2)';
+                        clone.style.transformOrigin = 'center center';
+                        content.appendChild(clone);
+                        // Mermaid再レンダリング
+                        if (typeof mermaid !== 'undefined' && window.mermaid) {
+                            window.mermaid.run({ nodes: [clone] });
+                        }
+                    }
+                    if (caption) {
+                        var capClone = caption.cloneNode(true);
+                        capClone.style.marginTop = '20px';
+                        content.appendChild(capClone);
+                    }
+                    overlay.classList.add('active');
+                    document.body.style.overflow = 'hidden';
+                });
+            });
+
+            // 閉じる処理
+            function closeLightbox() {
+                overlay.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+            closeBtn.addEventListener('click', closeLightbox);
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay) closeLightbox();
+            });
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') closeLightbox();
+            });
+        })();
+
+        // ===== 4. コードブロックコピーボタン =====
+        (function() {
+            // Mermaid図表内のコードは除外し、pre > code のみ対象
+            document.querySelectorAll('.mermaid').forEach(function(mermaid) {
+                // Mermaidのコードテキストをラップ
+                var codeText = mermaid.textContent.trim();
+                if (codeText) {
+                    var wrapper = document.createElement('div');
+                    wrapper.className = 'code-block-wrapper';
+
+                    var btn = document.createElement('button');
+                    btn.className = 'copy-btn';
+                    btn.innerHTML = '📋 コピー';
+                    btn.setAttribute('aria-label', 'コードをコピー');
+
+                    mermaid.parentNode.insertBefore(wrapper, mermaid);
+                    wrapper.appendChild(mermaid);
+                    wrapper.appendChild(btn);
+
+                    btn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(codeText).then(function() {
+                            btn.innerHTML = '✅ コピー済み';
+                            btn.classList.add('copied');
+                            setTimeout(function() {
+                                btn.innerHTML = '📋 コピー';
+                                btn.classList.remove('copied');
+                            }, 2000);
+                        }).catch(function() {
+                            btn.innerHTML = '❌ 失敗';
+                            setTimeout(function() {
+                                btn.innerHTML = '📋 コピー';
+                            }, 2000);
+                        });
+                    });
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

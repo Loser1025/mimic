@@ -1,0 +1,33 @@
+﻿@startuml workflow_graph_state
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam StateBorderColor #333333
+skinparam StateBackgroundColor #EEF5FF
+
+title WorkflowGraph — PlanStep 状態遷移
+
+[*] --> pending : ステップ作成
+
+pending --> running : 実行開始
+
+running --> done : 成功
+running --> failed : 失敗
+
+failed --> retrying : on_failure=retry
+retrying --> running : 再実行
+retrying --> skipped : 上限超過
+
+failed --> skipped : on_failure=skip
+failed --> [*] : on_failure=abort
+
+done --> [*] : on_success="" (次へ)
+done --> [*] : on_success=abort
+
+state "goto:<label>" as GOTO
+failed --> GOTO : on_failure=goto
+done --> GOTO : on_success=goto
+GOTO --> running : ジャンプ先で再開
+
+skipped --> [*]
+
+@enduml
